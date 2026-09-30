@@ -1,0 +1,15 @@
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import type { AppTheme } from '../theme';
+
+export type AppearancePreference = 'system' | 'light' | 'dark';
+
+export function AppearanceModal({ visible, value, onChange, onClose, theme }: { visible: boolean; value: AppearancePreference; onChange: (value: AppearancePreference) => void; onClose: () => void; theme: AppTheme }) {
+  const choices: { value: AppearancePreference; icon: string; title: string; description: string }[] = [
+    { value: 'system', icon: '◐', title: 'System', description: 'Match your phone or tablet appearance.' },
+    { value: 'light', icon: '☀️', title: 'Light', description: 'Always use the bright Kudos theme.' },
+    { value: 'dark', icon: '🌙', title: 'Dark', description: 'Always use the dark Kudos theme.' },
+  ];
+  return <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}><SafeAreaView style={[styles.root,{backgroundColor:theme.background}]}><View style={[styles.top,{borderBottomColor:theme.border}]}><Pressable onPress={onClose}><Text style={[styles.close,{color:theme.primary}]}>Done</Text></Pressable><Text style={[styles.title,{color:theme.text}]}>Appearance</Text><View style={styles.spacer}/></View><View style={styles.content}><Text style={[styles.heading,{color:theme.text}]}>Choose How Kudos Looks</Text><Text style={[styles.help,{color:theme.textMuted}]}>Your selection is saved on this device.</Text><View style={styles.list}>{choices.map(choice=>{const selected=value===choice.value;return <Pressable key={choice.value} onPress={()=>onChange(choice.value)} style={({pressed})=>[styles.row,{backgroundColor:selected?theme.primarySoft:theme.surface,borderColor:selected?theme.primary:theme.border},pressed&&styles.pressed]}><Text style={styles.icon}>{choice.icon}</Text><View style={styles.copy}><Text style={[styles.rowTitle,{color:theme.text}]}>{choice.title}</Text><Text style={[styles.description,{color:theme.textMuted}]}>{choice.description}</Text></View><Text style={[styles.check,{color:selected?theme.primary:theme.textMuted}]}>{selected?'✓':'○'}</Text></Pressable>})}</View></View></SafeAreaView></Modal>;
+}
+const styles=StyleSheet.create({root:{flex:1},top:{alignItems:'center',borderBottomWidth:StyleSheet.hairlineWidth,flexDirection:'row',justifyContent:'space-between',minHeight:58,paddingHorizontal:18},title:{fontSize:16,fontWeight:'900'},close:{fontSize: 14,fontWeight:'900'},spacer:{width:40},content:{alignSelf:'center',maxWidth:650,padding:22,width:'100%'},heading:{fontSize:24,fontWeight:'900'},help:{fontSize: 14,lineHeight:18,marginTop:7},list:{gap:10,marginTop:24},row:{alignItems:'center',borderRadius:20,borderWidth:1.5,flexDirection:'row',gap:13,minHeight:82,padding:15},icon:{fontSize:23,width:34},copy:{flex:1},rowTitle:{fontSize:15,fontWeight:'900'},description:{fontSize: 12,lineHeight:15,marginTop:3},check:{fontSize:20,fontWeight:'900'},pressed:{opacity:.72}});

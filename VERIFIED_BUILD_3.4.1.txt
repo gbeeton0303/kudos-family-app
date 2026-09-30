@@ -1,0 +1,15 @@
+BrightSteps 3.4.1 — VERIFIED REBUILD
+
+This build was reopened from the 3.4.0 ZIP and the following source files were directly verified/rebuilt:
+- src/components/CurrencyStorage.tsx
+- src/components/TaskCelebrationModal.tsx
+- src/screens/DashboardScreen.tsx
+- src/components/BottomNavigation.tsx
+
+Visual changes:
+1. Piggy bank is static/natural-size with crisp currency bitmaps.
+2. Treasure chest is static and uses a dedicated front-wall overlay so currency is visually inside.
+3. Coin/marble bitmaps are never scaled or rotated during storage fill.
+4. Task celebration does not scale/rasterize the card or moving currency artwork.
+5. Home Rewards/Tasks cards have centered icons/titles and no counts.
+6. Bottom nav uses custom outline Home/Calendar/Checklist/Settings controls.

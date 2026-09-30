@@ -1,0 +1,11 @@
+BrightSteps 3.5.0
+
+Storage rebuild included:
+- Kid-friendly animated Glass Jar
+- Kid-friendly animated Piggy Bank
+- Completely rebuilt native-shape Treasure Chest
+- Bottom-up animated stored currency
+- Task completion starts from previous balance
+- Newly earned currency drops visibly into the selected storage container
+- Storage then fills to the new balance
+- Coin/marble image assets remain fixed-size while moving (no image scaling)
