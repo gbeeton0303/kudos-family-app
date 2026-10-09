@@ -10,6 +10,8 @@
     "start:dev-client": "expo start --dev-client",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "typecheck:security": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext --moduleResolution bundler --allowImportingTsExtensions --lib ES2022,DOM supabase/functions/migrate-local-data/handler.ts supabase/functions/reward-action/handler.ts supabase/functions/_shared/adult-access-security.ts supabase/functions/_shared/entitlement-reconciliation.ts",
+    "test:backend": "node --test --experimental-strip-types tests/backend-integrity.test.mjs",
     "test": "node --test --experimental-strip-types tests/*.test.mjs",
     "doctor": "npx expo-doctor",
     "export:web": "expo export --platform web",
@@ -47,6 +49,7 @@
     "react-native-web": "~0.21.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@types/react": "~19.1.0",
     "typescript": "~5.9.2"
   },

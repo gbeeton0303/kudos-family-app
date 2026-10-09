@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 import { requireUser, serviceClient } from '../_shared/supabase.ts';
+import { requireRemovableAdult } from '../_shared/adult-access-security.ts';
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const normalizeEmail = (value: unknown) => String(value ?? '').trim().toLowerCase();
@@ -133,6 +134,7 @@ Deno.serve(async (req) => {
       const targetUserId = String(body.userId ?? '');
       await requireManager(admin, workspaceId, user.id);
       if (!targetUserId || targetUserId === user.id) throw new Error('Use Leave Family to remove your own access.');
+      await requireRemovableAdult(admin, workspaceId, targetUserId);
       const { data: target, error: targetError } = await admin.from('workspace_members').select('role').eq('workspace_id', workspaceId).eq('user_id', targetUserId).maybeSingle();
       if (targetError) throw targetError;
       if (!target || !['parent', 'teacher'].includes(target.role)) throw new Error('This adult is not a manager of the family.');

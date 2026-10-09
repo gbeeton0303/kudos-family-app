@@ -190,7 +190,7 @@ test('Apple Family Sharing transactions can unlock a separate adult account secu
   const migration = await read('../supabase/migrations/20260928001705_apple_family_sharing_entitlements.sql');
   assert.match(edge, /verified\.inAppOwnershipType === 'FAMILY_SHARED'/);
   assert.match(edge, /p_ownership_type: ownershipType/);
-  assert.match(edge, /if \(verified\.revocationDate\)[\s\S]*revoke_missing_apple_entitlement/);
+  assert.match(edge, /if \(verified\.revocationDate\)[\s\S]*revoke_verified_app_store_entitlement/);
   assert.match(migration, /ownership_type in \('PURCHASED', 'FAMILY_SHARED'\)/);
   assert.match(migration, /source_ownership_type = p_ownership_type/);
   assert.match(migration, /v_existing_purchaser is distinct from p_purchaser_user_id/);

@@ -1,6 +1,7 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 import { requireUser, serviceClient } from '../_shared/supabase.ts';
 import { importPKCS8, SignJWT } from 'npm:jose@5.10.0';
+import { reconcileAppleEntitlement } from '../_shared/entitlement-reconciliation.ts';
 
 const BUNDLE_ID = Deno.env.get('APPLE_IAP_BUNDLE_ID')?.trim() || 'com.beeton.kudosfamily';
 const LIFETIME_PRODUCT_ID = 'com.beeton.kudosfamily.lifetime';
@@ -275,11 +276,9 @@ Deno.serve(async (req) => {
     if (action === 'reconcile_apple_entitlement') {
       const before = await entitlementStatus(admin, workspaceId, user.id);
       if (!before.isBillingOwner) throw new Error('Only the workspace creator can reconcile Apple purchase access.');
-      const { error: reconcileError } = await admin.rpc('revoke_missing_apple_entitlement', {
-        p_workspace_id: workspaceId,
-        p_requester_user_id: user.id,
-      });
-      if (reconcileError) throw new Error(reconcileError.message);
+      await reconcileAppleEntitlement(
+        admin, workspaceId, user.id, BUNDLE_ID, LIFETIME_PRODUCT_ID, fetchVerifiedTransaction,
+      );
       return jsonResponse({ data: await entitlementStatus(admin, workspaceId, user.id) });
     }
 
@@ -305,9 +304,10 @@ Deno.serve(async (req) => {
       const ownershipType = verified.inAppOwnershipType === 'FAMILY_SHARED' ? 'FAMILY_SHARED' : 'PURCHASED';
       await requirePurchaseAccountMatch(admin, verified, user.id);
       if (verified.revocationDate) {
-        const { error: revokeError } = await admin.rpc('revoke_missing_apple_entitlement', {
+        const { error: revokeError } = await admin.rpc('revoke_verified_app_store_entitlement', {
           p_workspace_id: workspaceId,
           p_requester_user_id: user.id,
+          p_transaction_id: verified.transactionId,
         });
         if (revokeError) throw new Error(revokeError.message);
         return jsonResponse({ data: await entitlementStatus(admin, workspaceId, user.id) });
