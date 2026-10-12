@@ -51,3 +51,39 @@ export async function deleteKudosAccount(access: WorkspaceAccess) {
   await AsyncStorage.removeItem(SELECTED_WORKSPACE_KEY).catch(() => undefined);
   return data?.data as { deleted: boolean; scope: 'family' | 'child'; accountRetained?: boolean; deletedAuthUsers?: number; retainedAuthUsers?: number } | undefined;
 }
+
+export type EntireAccountPreview = {
+  scope: 'account-preview';
+  userId: string;
+  ownedWorkspaces: { id: string; name: string; type: string }[];
+  joinedWorkspaceIds: string[];
+};
+
+export async function previewEntireAccountDeletion(): Promise<EntireAccountPreview> {
+  // Intentionally omit workspaceId: an older deployed function then rejects
+  // this request instead of mistaking a read-only preview for workspace deletion.
+  const { data, error } = await requireSupabase().functions.invoke('delete-account', { body: { action: 'preview_entire_account' } });
+  if (error) await throwDeleteFunctionError(error);
+  if (data?.error) throw new Error(data.error);
+  if (data?.data?.scope !== 'account-preview') throw new Error('Update the account deletion service before trying again.');
+  return data.data;
+}
+
+export async function deleteEntireKudosAccount(preview: EntireAccountPreview) {
+  const { data, error } = await requireSupabase().functions.invoke('delete-account', { body: {
+    action: 'delete_entire_account', confirm: true, expectedUserId: preview.userId,
+    expectedWorkspaceIds: preview.ownedWorkspaces.map((item) => item.id),
+    expectedJoinedWorkspaceIds: preview.joinedWorkspaceIds,
+  } });
+  if (error) await throwDeleteFunctionError(error);
+  if (data?.error) throw new Error(data.error);
+  if (data?.data?.scope !== 'account' || data.data.deleted !== true) throw new Error('Account deletion was not confirmed by Kudos Cloud.');
+  // Remove this user's membership/entitlement caches only; do not wipe another
+  // user's cached account on a shared device.
+  const keys = await AsyncStorage.getAllKeys().catch(() => []);
+  const workspaceIds = [...preview.ownedWorkspaces.map((item) => item.id), ...preview.joinedWorkspaceIds];
+  await AsyncStorage.multiRemove(keys.filter((key) => key === SELECTED_WORKSPACE_KEY
+    || key === `@kudos/workspace-access-v1/${preview.userId}`
+    || workspaceIds.some((id) => ['@brightsteps/cloud-cache-v1', '@brightsteps/cloud-queue-v1', '@brightsteps/cloud-failed-v1'].some((prefix) => key === `${prefix}/${id}`))
+    || key.startsWith(`@kudos/workspace-entitlement-v1/${preview.userId}/`))).catch(() => undefined);
+}

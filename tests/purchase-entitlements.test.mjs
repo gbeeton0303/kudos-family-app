@@ -173,7 +173,9 @@ test('new adult accounts record acceptance of the purchase-aware legal documents
   const legal = await read('../src/legal.ts');
   const migration = await read('../supabase/migrations/20260906000100_workspace_entitlements.sql');
   assert.match(legal, /TERMS_VERSION = '2026-09-06'/);
-  assert.match(legal, /PRIVACY_VERSION = '2026-09-06'/);
+  assert.match(legal, /PRIVACY_VERSION = '2026-10-10'/);
+  const childMigration = await read('../supabase/migrations/20261010154920_persistent_child_login_security.sql');
+  assert.match(childMigration, /v_privacy in \('2026-09-06','2026-10-10'\)/);
   assert.match(migration, /v_terms = '2026-09-06' and v_privacy = '2026-09-06'/);
 });
 

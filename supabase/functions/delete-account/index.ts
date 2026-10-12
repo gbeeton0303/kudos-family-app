@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 import { requireUser, serviceClient } from '../_shared/supabase.ts';
+import { entireAccountAction } from './entire-account.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -8,7 +9,9 @@ Deno.serve(async (req) => {
     const { user } = await requireUser(req);
     const body = await req.json().catch(() => ({}));
     const workspaceId = String(body.workspaceId ?? '');
-    if (!workspaceId) return jsonResponse({ error: 'Workspace is required.' }, 400);
+    const entire = body.action === 'preview_entire_account' || body.action === 'delete_entire_account';
+    if (!entire && !workspaceId) return jsonResponse({ error: 'Workspace is required.' }, 400);
+    if (body.action && !entire) return jsonResponse({ error: 'Unknown deletion action.' }, 400);
 
     const admin = serviceClient();
     const deleteMediaPrefix = async (rootPrefix: string) => {
@@ -35,6 +38,7 @@ Deno.serve(async (req) => {
         if (error) throw error;
       }
     };
+    if (entire) return jsonResponse({ data: await entireAccountAction(admin, user, body, deleteMediaPrefix) });
     const { data: membership, error: membershipError } = await admin
       .from('workspace_members')
       .select('role')

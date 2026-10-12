@@ -1,4 +1,5 @@
 import { Image, StyleSheet, Text, View } from 'react-native';
+import { CachedAssetImage } from './CachedAssetImage';
 
 const BUNDLED_TASK_ICONS: Record<string, any> = {
   // Reward sticker library
@@ -94,7 +95,7 @@ export function ItemIconView({ icon, size = 48, backgroundColor, theme, accessib
       {safeIcon.type === 'photo' ? (
         <Image source={{ uri: safeIcon.uri }} style={{ borderRadius: radius, height: size, width: size }} />
       ) : BUNDLED_TASK_ICONS[safeIcon.value] ? (
-        <Image source={BUNDLED_TASK_ICONS[safeIcon.value]} resizeMode="contain" style={{ height: size, width: size }} />
+        <CachedAssetImage source={BUNDLED_TASK_ICONS[safeIcon.value]} resizeMode="contain" style={{ height: size, width: size }} />
       ) : (
         <Text style={{ fontSize: Math.max(18, Math.round(size * 0.48)) }}>{safeIcon.value}</Text>
       )}

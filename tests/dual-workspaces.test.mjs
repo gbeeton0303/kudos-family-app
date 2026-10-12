@@ -10,14 +10,14 @@ test('Teacher Mode switches real family and classroom workspaces', async () => {
   assert.match(app, /onWorkspaceTypeChange\(enabled \? 'classroom' : 'family'\)/);
   assert.match(app, /workspaces\.selectWorkspace\(existing\.workspaceId\)/);
   assert.match(app, /createWorkspace\(name, workspaceToCreate\)/);
-  assert.match(app, /key=\{workspaces\.selected\.workspaceId\}/);
+  assert.match(app, /key=\{`\$\{auth\.user\.id\}:\$\{workspaces\.selected\.workspaceId\}`\}/);
   assert.match(settings, /Switch to your separate classroom workspace/);
   assert.match(settings, /Switch back to your separate family workspace/);
 });
 
-test('account settings expose separate family and classroom names', async () => {
+test('workspace settings expose separate family and classroom names', async () => {
   const modal = await read('../src/components/CloudAccountModal.tsx');
-  assert.match(modal, /Your Workspaces/);
+  assert.match(modal, /manager && section === 'workspaces'/);
   assert.match(modal, /\(\['family', 'classroom'\] as WorkspaceType\[\]\)\.map/);
   assert.match(modal, /await renameWorkspace\(workspace\.workspaceId, nextValue\)/);
   assert.match(modal, /await createWorkspace\(nextValue, type\)/);

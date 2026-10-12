@@ -15,6 +15,8 @@ import type {
 import { createInitialFamilyState, getTaskPeriodKey, makeId, normalizeFamilyState } from '../data/familyData';
 import { prepareAvatarForCloud, prepareIconForCloud, signMediaPaths } from './media';
 import { requireSupabase } from './supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { readAllPages } from './pagination';
 
 export type NewCloudProfileInput = Omit<ChildProfile, 'id' | 'startingBalance' | 'createdAt'>;
 
@@ -26,8 +28,16 @@ function avatarFromRow(type: string, value: string, signed: Map<string, string>)
   return type === 'photo' ? { type: 'photo', uri: signed.get(value) ?? value } : { type: 'preset', key: value as AvatarKey };
 }
 
-export async function fetchCloudFamilyState(workspaceId: string): Promise<FamilyState> {
-  const client = requireSupabase();
+async function readWorkspaceTable(client: SupabaseClient, workspaceId: string, table: string, columns: string, order: string, ascending = true) {
+  return readAllPages<any>((from, to) => {
+    let query = client.from(table).select(columns, { count: 'exact' }).eq('workspace_id', workspaceId).order(order, { ascending });
+    // Stable tie-breaking prevents equal timestamps from skipping/repeating rows.
+    query = query.order(table.endsWith('_assignments') ? 'profile_id' : 'id', { ascending: true });
+    return query.range(from, to);
+  });
+}
+
+export async function fetchCloudFamilyState(workspaceId: string, client: SupabaseClient = requireSupabase()): Promise<FamilyState> {
   const [
     profileResult,
     taskResult,
@@ -41,17 +51,17 @@ export async function fetchCloudFamilyState(workspaceId: string): Promise<Family
     balanceResetResult,
     ledgerResult,
   ] = await Promise.all([
-    client.from('child_profiles').select('*').eq('workspace_id', workspaceId).order('created_at'),
-    client.from('task_templates').select('*').eq('workspace_id', workspaceId).order('created_at'),
-    client.from('task_assignments').select('*').eq('workspace_id', workspaceId),
-    client.from('task_completions').select('*').eq('workspace_id', workspaceId).order('completed_at'),
-    client.from('task_completion_requests').select('*').eq('workspace_id', workspaceId).order('requested_at', { ascending: false }),
-    client.from('reward_templates').select('*').eq('workspace_id', workspaceId).order('created_at'),
-    client.from('reward_assignments').select('*').eq('workspace_id', workspaceId),
-    client.from('reward_redemptions').select('*').eq('workspace_id', workspaceId).order('redeemed_at'),
-    client.from('reward_deliveries').select('*').eq('workspace_id', workspaceId).order('sent_at', { ascending: false }),
-    client.from('profile_balance_resets').select('profile_id, reset_at').eq('workspace_id', workspaceId).order('reset_at'),
-    client.from('currency_ledger').select('id, profile_id, amount, transaction_type, source_id, description, created_at').eq('workspace_id', workspaceId).order('created_at'),
+    readWorkspaceTable(client, workspaceId, 'child_profiles', '*', 'created_at'),
+    readWorkspaceTable(client, workspaceId, 'task_templates', '*', 'created_at'),
+    readWorkspaceTable(client, workspaceId, 'task_assignments', '*', 'task_id'),
+    readWorkspaceTable(client, workspaceId, 'task_completions', '*', 'completed_at'),
+    readWorkspaceTable(client, workspaceId, 'task_completion_requests', '*', 'requested_at', false),
+    readWorkspaceTable(client, workspaceId, 'reward_templates', '*', 'created_at'),
+    readWorkspaceTable(client, workspaceId, 'reward_assignments', '*', 'reward_id'),
+    readWorkspaceTable(client, workspaceId, 'reward_redemptions', '*', 'redeemed_at'),
+    readWorkspaceTable(client, workspaceId, 'reward_deliveries', '*', 'sent_at', false),
+    readWorkspaceTable(client, workspaceId, 'profile_balance_resets', 'id, profile_id, reset_at', 'reset_at'),
+    readWorkspaceTable(client, workspaceId, 'currency_ledger', 'id, profile_id, amount, transaction_type, source_id, description, created_at', 'created_at'),
   ]);
 
   const failure = [profileResult, taskResult, taskAssignmentResult, taskCompletionResult, requestResult, rewardResult, rewardAssignmentResult, redemptionResult, deliveryResult, balanceResetResult, ledgerResult].find((result) => result.error);
@@ -63,7 +73,7 @@ export async function fetchCloudFamilyState(workspaceId: string): Promise<Family
     ...(rewardResult.data ?? []).filter((row) => row.icon_type === 'photo').map((row) => row.icon_value),
     ...(deliveryResult.data ?? []).filter((row) => row.reward_icon_type === 'photo').map((row) => row.reward_icon_value),
   ];
-  const signed = await signMediaPaths(photoPaths);
+  const signed = await signMediaPaths(photoPaths, client);
 
   const balanceResets = new Map<string, string[]>();
   const addBalanceReset = (profileId: string, occurredAt: string) => {
@@ -179,11 +189,15 @@ export async function fetchCloudFamilyState(workspaceId: string): Promise<Family
     rewardAssignments.set(row.reward_id, [...(rewardAssignments.get(row.reward_id) ?? []), row.profile_id]);
   }
   const redemptionEvents = new Map<string, Record<string, string[]>>();
+  const redemptionAccountingEvents = new Map<string, Record<string, string[]>>();
   const redemptionCosts = new Map<string, Record<string, number[]>>();
   for (const row of redemptionResult.data ?? []) {
     const rewardMap = redemptionEvents.get(row.reward_id) ?? {};
-    rewardMap[row.profile_id] = [...(rewardMap[row.profile_id] ?? []), row.redeemed_at];
+    rewardMap[row.profile_id] = [...(rewardMap[row.profile_id] ?? []), row.occurred_at ?? row.redeemed_at];
     redemptionEvents.set(row.reward_id, rewardMap);
+    const accountingMap = redemptionAccountingEvents.get(row.reward_id) ?? {};
+    accountingMap[row.profile_id] = [...(accountingMap[row.profile_id] ?? []), row.redeemed_at];
+    redemptionAccountingEvents.set(row.reward_id, accountingMap);
     const costMap = redemptionCosts.get(row.reward_id) ?? {};
     costMap[row.profile_id] = [...(costMap[row.profile_id] ?? []), Number(row.cost ?? 0)];
     redemptionCosts.set(row.reward_id, costMap);
@@ -195,6 +209,7 @@ export async function fetchCloudFamilyState(workspaceId: string): Promise<Family
     icon: iconFromRow(row.icon_type, row.icon_value, signed),
     assignedProfileIds: rewardAssignments.get(row.id) ?? [],
     redemptionEvents: redemptionEvents.get(row.id) ?? {},
+    redemptionAccountingEvents: redemptionAccountingEvents.get(row.id) ?? {},
     redemptionCosts: redemptionCosts.get(row.id) ?? {},
     createdAt: row.created_at,
   })) as ChildReward[];
@@ -246,9 +261,8 @@ export async function fetchCloudFamilyState(workspaceId: string): Promise<Family
   return normalizeFamilyState({ profiles, tasks, rewards, completionRequests, rewardDeliveries });
 }
 
-export async function insertProfile(workspaceId: string, profile: ChildProfile) {
-  const client = requireSupabase();
-  const avatar = await prepareAvatarForCloud(workspaceId, profile.id, profile.avatar);
+export async function insertProfile(workspaceId: string, profile: ChildProfile, client: SupabaseClient = requireSupabase()) {
+  const avatar = await prepareAvatarForCloud(workspaceId, profile.id, profile.avatar, client);
   const { error } = await client.from('child_profiles').insert({
     id: profile.id,
     workspace_id: workspaceId,
@@ -265,14 +279,14 @@ export async function insertProfile(workspaceId: string, profile: ChildProfile) 
   if (error) throw error;
 }
 
-export async function updateProfile(workspaceId: string, profile: ChildProfile) {
-  const avatar = await prepareAvatarForCloud(workspaceId, profile.id, profile.avatar);
-  const { error } = await requireSupabase().from('child_profiles').update({ name: profile.name, avatar_type: avatar.type, avatar_value: avatar.value, color_key: profile.colorKey, pattern: profile.pattern, currency_type: profile.currencyType, storage_type: profile.storageType }).eq('id', profile.id);
+export async function updateProfile(workspaceId: string, profile: ChildProfile, client: SupabaseClient = requireSupabase()) {
+  const avatar = await prepareAvatarForCloud(workspaceId, profile.id, profile.avatar, client);
+  const { error } = await client.from('child_profiles').update({ name: profile.name, avatar_type: avatar.type, avatar_value: avatar.value, color_key: profile.colorKey, pattern: profile.pattern, currency_type: profile.currencyType, storage_type: profile.storageType }).eq('id', profile.id);
   if (error) throw error;
 }
 
-export async function updateChildProfilePreferences(profile: ChildProfile) {
-  const { data, error } = await requireSupabase().rpc('update_child_profile_preferences', {
+export async function updateChildProfilePreferences(profile: ChildProfile, client: SupabaseClient = requireSupabase()) {
+  const { data, error } = await client.rpc('update_child_profile_preferences', {
     p_profile_id: profile.id,
     p_color_key: profile.colorKey,
     p_pattern: profile.pattern,
@@ -283,14 +297,13 @@ export async function updateChildProfilePreferences(profile: ChildProfile) {
   return data;
 }
 
-export async function removeProfile(profileId: string) {
-  const { error } = await requireSupabase().from('child_profiles').delete().eq('id', profileId);
+export async function removeProfile(profileId: string, client: SupabaseClient = requireSupabase()) {
+  const { error } = await client.from('child_profiles').delete().eq('id', profileId);
   if (error) throw error;
 }
 
-export async function insertTask(workspaceId: string, task: ChildTask) {
-  const client = requireSupabase();
-  const icon = await prepareIconForCloud(workspaceId, 'tasks', task.id, task.icon);
+export async function insertTask(workspaceId: string, task: ChildTask, client: SupabaseClient = requireSupabase()) {
+  const icon = await prepareIconForCloud(workspaceId, 'tasks', task.id, task.icon, client);
   const { data: userData } = await client.auth.getUser();
   // This mutation must be safe to retry. Previously the template insert could
   // succeed while its assignments failed; every retry then stopped at the
@@ -310,17 +323,16 @@ export async function insertTask(workspaceId: string, task: ChildTask) {
     created_at: task.createdAt,
   }, { onConflict: 'id' });
   if (error) throw error;
-  await reconcileTaskAssignments(workspaceId, task.id, task.assignedProfileIds);
+  await reconcileTaskAssignments(workspaceId, task.id, task.assignedProfileIds, client);
 }
 
-export async function removeTask(taskId: string) {
-  const { error } = await requireSupabase().from('task_templates').update({ archived_at: new Date().toISOString() }).eq('id', taskId);
+export async function removeTask(taskId: string, client: SupabaseClient = requireSupabase()) {
+  const { error } = await client.from('task_templates').update({ archived_at: new Date().toISOString() }).eq('id', taskId);
   if (error) throw error;
 }
 
-export async function updateTask(workspaceId: string, task: ChildTask) {
-  const client = requireSupabase();
-  const icon = await prepareIconForCloud(workspaceId, 'tasks', task.id, task.icon);
+export async function updateTask(workspaceId: string, task: ChildTask, client: SupabaseClient = requireSupabase()) {
+  const icon = await prepareIconForCloud(workspaceId, 'tasks', task.id, task.icon, client);
   const { error } = await client.from('task_templates').update({
     title: task.title,
     amount: task.amount,
@@ -332,11 +344,10 @@ export async function updateTask(workspaceId: string, task: ChildTask) {
     schedule_dates: task.scheduleDates ?? null,
   }).eq('id', task.id).eq('workspace_id', workspaceId);
   if (error) throw error;
-  await reconcileTaskAssignments(workspaceId, task.id, task.assignedProfileIds);
+  await reconcileTaskAssignments(workspaceId, task.id, task.assignedProfileIds, client);
 }
 
-async function reconcileTaskAssignments(workspaceId: string, taskId: string, profileIds: string[]) {
-  const client = requireSupabase();
+async function reconcileTaskAssignments(workspaceId: string, taskId: string, profileIds: string[], client: SupabaseClient = requireSupabase()) {
   const desired = [...new Set(profileIds)];
 
   // Upsert desired rows first so an interrupted edit never temporarily removes
@@ -367,8 +378,7 @@ async function reconcileTaskAssignments(workspaceId: string, taskId: string, pro
   }
 }
 
-export async function setTaskAssignment(workspaceId: string, taskId: string, profileId: string, assigned: boolean) {
-  const client = requireSupabase();
+export async function setTaskAssignment(workspaceId: string, taskId: string, profileId: string, assigned: boolean, client: SupabaseClient = requireSupabase()) {
   if (assigned) {
     const { error } = await client.from('task_assignments').upsert({ workspace_id: workspaceId, task_id: taskId, profile_id: profileId }, { onConflict: 'task_id,profile_id' });
     if (error) throw error;
@@ -414,16 +424,16 @@ async function throwFunctionError(error: unknown): Promise<never> {
   throw new Error(detail);
 }
 
-export async function performTaskAction(body: Record<string, unknown>) {
-  const { data, error } = await requireSupabase().functions.invoke('task-action', { body });
+export async function performTaskAction(body: Record<string, unknown>, client: SupabaseClient = requireSupabase()) {
+  const { data, error } = await client.functions.invoke('task-action', { body });
   if (error) await throwFunctionError(error);
   if (data?.error) throw new Error(cloudErrorText(data.error, 'Task action failed'));
   return data?.data;
 }
 
-async function completeTaskConfirmed(payload: Extract<CloudMutation, { type: 'complete_task' }>['payload']) {
+async function completeTaskConfirmed(payload: Extract<CloudMutation, { type: 'complete_task' }>['payload'], client: SupabaseClient = requireSupabase()) {
   const procedure = payload.allowRepeatDaily ? 'complete_daily_task_again' : 'complete_task_direct';
-  const { data, error } = await requireSupabase().rpc(procedure, {
+  const { data, error } = await client.rpc(procedure, {
     p_event_id: payload.eventId,
     p_task_id: payload.taskId,
     p_profile_id: payload.profileId,
@@ -435,8 +445,8 @@ async function completeTaskConfirmed(payload: Extract<CloudMutation, { type: 'co
   return data;
 }
 
-async function undoTaskConfirmed(payload: Extract<CloudMutation, { type: 'undo_task' }>['payload']) {
-  const { data, error } = await requireSupabase().rpc('undo_task_completion', {
+async function undoTaskConfirmed(payload: Extract<CloudMutation, { type: 'undo_task' }>['payload'], client: SupabaseClient = requireSupabase()) {
+  const { data, error } = await client.rpc('undo_task_completion', {
     p_task_id: payload.taskId,
     p_profile_id: payload.profileId,
     p_completed_at: payload.occurredAt ?? null,
@@ -445,8 +455,8 @@ async function undoTaskConfirmed(payload: Extract<CloudMutation, { type: 'undo_t
   return data;
 }
 
-async function submitTaskRequestConfirmed(payload: Extract<CloudMutation, { type: 'request_task' }>['payload']) {
-  const { data, error } = await requireSupabase().rpc('submit_task_request', {
+async function submitTaskRequestConfirmed(payload: Extract<CloudMutation, { type: 'request_task' }>['payload'], client: SupabaseClient = requireSupabase()) {
+  const { data, error } = await client.rpc('submit_task_request', {
     p_request_id: payload.requestId,
     p_task_id: payload.taskId,
     p_profile_id: payload.profileId,
@@ -459,25 +469,24 @@ async function submitTaskRequestConfirmed(payload: Extract<CloudMutation, { type
   // The database write is the source of truth. Push delivery is a best-effort
   // follow-up so a missing/cold Edge Function can never prevent a child from
   // submitting a completed task to their parent.
-  void performTaskAction({ action: 'notify-request', requestId: payload.requestId }).catch(() => undefined);
+  void performTaskAction({ action: 'notify-request', requestId: payload.requestId }, client).catch(() => undefined);
   return data;
 }
 
-async function reviewTaskRequestConfirmed(payload: Extract<CloudMutation, { type: 'resolve_task' }>['payload']) {
+async function reviewTaskRequestConfirmed(payload: Extract<CloudMutation, { type: 'resolve_task' }>['payload'], client: SupabaseClient = requireSupabase()) {
   const status = payload.status === 'approved' ? 'approved' : 'denied';
-  const { data, error } = await requireSupabase().rpc('review_task_request', {
+  const { data, error } = await client.rpc('review_task_request', {
     p_request_id: payload.requestId,
     p_status: status,
     p_completion_id: payload.completionId,
   });
   if (error) throw error;
-  void performTaskAction({ action: 'notify-review', requestId: payload.requestId, status }).catch(() => undefined);
+  void performTaskAction({ action: 'notify-review', requestId: payload.requestId, status }, client).catch(() => undefined);
   return data;
 }
 
-export async function insertReward(workspaceId: string, reward: ChildReward) {
-  const client = requireSupabase();
-  const icon = await prepareIconForCloud(workspaceId, 'rewards', reward.id, reward.icon);
+export async function insertReward(workspaceId: string, reward: ChildReward, client: SupabaseClient = requireSupabase()) {
+  const icon = await prepareIconForCloud(workspaceId, 'rewards', reward.id, reward.icon, client);
   const { data: userData } = await client.auth.getUser();
   const { error } = await client.from('reward_templates').insert({
     id: reward.id,
@@ -500,9 +509,8 @@ export async function insertReward(workspaceId: string, reward: ChildReward) {
   }
 }
 
-export async function updateReward(workspaceId: string, reward: ChildReward) {
-  const client = requireSupabase();
-  const icon = await prepareIconForCloud(workspaceId, 'rewards', reward.id, reward.icon);
+export async function updateReward(workspaceId: string, reward: ChildReward, client: SupabaseClient = requireSupabase()) {
+  const icon = await prepareIconForCloud(workspaceId, 'rewards', reward.id, reward.icon, client);
   const { error } = await client.from('reward_templates').update({ title: reward.title, cost: reward.cost, icon_type: icon.type, icon_value: icon.value }).eq('id', reward.id);
   if (error) throw error;
   const { error: removeError } = await client.from('reward_assignments').delete().eq('reward_id', reward.id);
@@ -513,13 +521,12 @@ export async function updateReward(workspaceId: string, reward: ChildReward) {
   }
 }
 
-export async function removeReward(rewardId: string) {
-  const { error } = await requireSupabase().from('reward_templates').delete().eq('id', rewardId);
+export async function removeReward(rewardId: string, client: SupabaseClient = requireSupabase()) {
+  const { error } = await client.from('reward_templates').delete().eq('id', rewardId);
   if (error) throw error;
 }
 
-export async function setRewardAssignment(workspaceId: string, rewardId: string, profileId: string, assigned: boolean) {
-  const client = requireSupabase();
+export async function setRewardAssignment(workspaceId: string, rewardId: string, profileId: string, assigned: boolean, client: SupabaseClient = requireSupabase()) {
   if (assigned) {
     const { error } = await client.from('reward_assignments').upsert({ workspace_id: workspaceId, reward_id: rewardId, profile_id: profileId }, { onConflict: 'reward_id,profile_id' });
     if (error) throw error;
@@ -529,8 +536,7 @@ export async function setRewardAssignment(workspaceId: string, rewardId: string,
   }
 }
 
-async function redeemRewardDirect(workspaceId: string, payload: Extract<CloudMutation, { type: 'redeem_reward' }>['payload']) {
-  const client = requireSupabase();
+async function redeemRewardDirect(workspaceId: string, payload: Extract<CloudMutation, { type: 'redeem_reward' }>['payload'], client: SupabaseClient = requireSupabase()) {
 
   // Repair only what is actually missing. Do not overwrite an existing cloud
   // reward template just because the local snapshot is older.
@@ -543,7 +549,7 @@ async function redeemRewardDirect(workspaceId: string, payload: Extract<CloudMut
     if (lookupError) throw lookupError;
 
     if (!existingReward) {
-      const icon = await prepareIconForCloud(workspaceId, 'rewards', payload.reward.id, payload.reward.icon);
+      const icon = await prepareIconForCloud(workspaceId, 'rewards', payload.reward.id, payload.reward.icon, client);
       const { data: userData } = await client.auth.getUser();
       const { error: insertError } = await client.from('reward_templates').insert({
         id: payload.reward.id,
@@ -592,18 +598,8 @@ async function redeemRewardDirect(workspaceId: string, payload: Extract<CloudMut
     }));
   }
 
-  // A second adult or an offline queue can change the server balance after
-  // this device rendered the confirmation sheet. If that race leaves fewer
-  // points than the reward costs, preserve the user's explicit redemption by
-  // using the existing early-redemption path instead of stranding a failed
-  // sync change. The server charges the remaining balance and records its
-  // reset boundary atomically.
-  if (error && payload.allowEarly !== true && /insufficient balance/i.test(cloudErrorText(error, ''))) {
-    ({ data, error } = await client.rpc('redeem_reward', {
-      ...rpcArgs,
-      p_allow_early: true,
-    }));
-  }
+  // A stale balance never authorizes early redemption. Preserve the adult's
+  // original choice; a conflict goes to review instead of silently spending less.
 
   if (error) throw error;
 
@@ -615,14 +611,14 @@ async function redeemRewardDirect(workspaceId: string, payload: Extract<CloudMut
       action: 'notify',
       deliveryId: payload.deliveryId,
       profileId: payload.profileId,
-    }).catch(() => undefined);
+    }, client).catch(() => undefined);
   }
 
   return data;
 }
 
-export async function performRewardAction(body: Record<string, unknown>) {
-  const { data, error } = await requireSupabase().functions.invoke('reward-action', { body });
+export async function performRewardAction(body: Record<string, unknown>, client: SupabaseClient = requireSupabase()) {
+  const { data, error } = await client.functions.invoke('reward-action', { body });
   if (error) await throwFunctionError(error);
   if (data?.error) throw new Error(cloudErrorText(data.error, 'Reward action failed'));
   return data?.data;
@@ -648,31 +644,31 @@ export type CloudMutation =
   | { id: string; type: 'redeem_reward'; payload: { redemptionId: string; deliveryId: string; rewardId: string; profileId: string; deliverToChild: boolean; redeemedAt: string; allowEarly?: boolean; reward?: ChildReward } }
   | { id: string; type: 'open_delivery'; payload: { deliveryId: string } };
 
-export async function executeCloudMutation(workspaceId: string, mutation: CloudMutation) {
+export async function executeCloudMutation(workspaceId: string, mutation: CloudMutation, client: SupabaseClient = requireSupabase()) {
   try {
     switch (mutation.type) {
-    case 'add_profile': return insertProfile(workspaceId, mutation.payload.profile);
-    case 'update_profile': return updateProfile(workspaceId, mutation.payload.profile);
-    case 'update_child_preferences': return updateChildProfilePreferences(mutation.payload.profile);
-    case 'delete_profile': return removeProfile(mutation.payload.profileId);
-    case 'add_task': return insertTask(workspaceId, mutation.payload.task);
-    case 'update_task': return updateTask(workspaceId, mutation.payload.task);
-    case 'delete_task': return removeTask(mutation.payload.taskId);
-    case 'set_task_assignment': return setTaskAssignment(workspaceId, mutation.payload.taskId, mutation.payload.profileId, mutation.payload.assigned);
+    case 'add_profile': return insertProfile(workspaceId, mutation.payload.profile, client);
+    case 'update_profile': return updateProfile(workspaceId, mutation.payload.profile, client);
+    case 'update_child_preferences': return updateChildProfilePreferences(mutation.payload.profile, client);
+    case 'delete_profile': return removeProfile(mutation.payload.profileId, client);
+    case 'add_task': return insertTask(workspaceId, mutation.payload.task, client);
+    case 'update_task': return updateTask(workspaceId, mutation.payload.task, client);
+    case 'delete_task': return removeTask(mutation.payload.taskId, client);
+    case 'set_task_assignment': return setTaskAssignment(workspaceId, mutation.payload.taskId, mutation.payload.profileId, mutation.payload.assigned, client);
     // Direct manager completions do not need push delivery. Calling the
     // authenticated RPC directly avoids an Edge Function cold start before
     // the celebration can be shown.
-    case 'complete_task': return completeTaskConfirmed(mutation.payload);
-    case 'undo_task': return undoTaskConfirmed(mutation.payload);
-    case 'request_task': return submitTaskRequestConfirmed(mutation.payload);
-    case 'resolve_task': return reviewTaskRequestConfirmed(mutation.payload);
-    case 'add_reward': return insertReward(workspaceId, mutation.payload.reward);
-    case 'update_reward': return updateReward(workspaceId, mutation.payload.reward);
-    case 'delete_reward': return removeReward(mutation.payload.rewardId);
-    case 'set_reward_assignment': return setRewardAssignment(workspaceId, mutation.payload.rewardId, mutation.payload.profileId, mutation.payload.assigned);
+    case 'complete_task': return completeTaskConfirmed(mutation.payload, client);
+    case 'undo_task': return undoTaskConfirmed(mutation.payload, client);
+    case 'request_task': return submitTaskRequestConfirmed(mutation.payload, client);
+    case 'resolve_task': return reviewTaskRequestConfirmed(mutation.payload, client);
+    case 'add_reward': return insertReward(workspaceId, mutation.payload.reward, client);
+    case 'update_reward': return updateReward(workspaceId, mutation.payload.reward, client);
+    case 'delete_reward': return removeReward(mutation.payload.rewardId, client);
+    case 'set_reward_assignment': return setRewardAssignment(workspaceId, mutation.payload.rewardId, mutation.payload.profileId, mutation.payload.assigned, client);
     case 'redeem_reward':
-      return redeemRewardDirect(workspaceId, mutation.payload);
-    case 'open_delivery': return performRewardAction({ action: 'open', deliveryId: mutation.payload.deliveryId });
+      return redeemRewardDirect(workspaceId, mutation.payload, client);
+    case 'open_delivery': return performRewardAction({ action: 'open', deliveryId: mutation.payload.deliveryId }, client);
     }
   } catch (error) {
     const detail = cloudErrorText(error, 'Cloud request failed');

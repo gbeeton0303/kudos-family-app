@@ -14,7 +14,7 @@ Kudos supports local-only use and optional Kudos Cloud use. Information that rem
 |---|---|---:|---:|---|
 | Contact Info — Email Address | Parent/teacher account email; password-reset destination; adult invitation and support destination | Yes | No | Account authentication and recovery through Supabase Auth; transactional email through Resend |
 | Contact Info — Name | Adult display name; family/classroom name; child name or nickname | Yes | No | Identify accounts, workspaces, and profiles in Kudos Cloud |
-| Identifiers — User ID | Supabase user ID, workspace ID, child profile ID, invitation relationship | Yes | No | Authentication, permissions, account linking, and data isolation |
+| Identifiers — User ID | Supabase user ID, optional child username and non-deliverable internal login identifier, workspace ID, child profile ID, invitation relationship | Yes | No | Authentication, permissions, account linking, and data isolation |
 | Identifiers — Device ID | Expo push token and platform | Yes | No | Deliver task approval and reward notifications; not used for advertising |
 | User Content — Photos or Videos | Optional profile, task, or reward photos selected by a parent/teacher | Yes | No | Display user-selected images; stored in private Supabase Storage |
 | User Content — Other User Content | Task and reward titles, descriptions, schedules, values, icons, family/classroom name | Yes | No | Core task and reward functionality |

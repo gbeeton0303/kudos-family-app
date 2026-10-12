@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { getAvailablePurchases, type Purchase, useIAP } from 'expo-iap';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { deleteKudosAccount } from '../cloud/accountActions';
+import { useAccountDeletion } from '../cloud/useAccountDeletion';
+import { PurchaseWorkspaceSwitcher } from '../components/PurchaseWorkspaceSwitcher';
 import type { WorkspaceAccess } from '../cloud/types';
 import { PRIVACY_URL, TERMS_URL } from '../legal';
 import { startWorkspaceTrial, verifyWorkspacePurchase } from '../purchases/entitlements';
@@ -21,43 +22,21 @@ type Props = {
   onClose?: () => void;
   onRefresh: () => Promise<EvaluatedEntitlement | null>;
   onSignOut: () => void;
+  workspaces: WorkspaceAccess[];
+  onWorkspaceSelect: (id: string) => Promise<void>;
+  onWorkspaceRefresh: () => Promise<void>;
   onVerified: (entitlement: EvaluatedEntitlement) => void;
   userId: string;
 };
 
-function confirmDeleteAccount(access: WorkspaceAccess, onSignOut: () => void) {
-  const child = access.role === 'child';
-  const workspaceNoun = access.workspaceType === 'classroom' ? 'classroom' : 'family';
-  Alert.alert(
-    child ? 'Delete your account?' : `Delete ${workspaceNoun} account?`,
-    child
-      ? 'This permanently deletes your child account, linked profile, and associated data.'
-      : `This permanently deletes “${access.workspaceName}”, all of its data, and linked ${access.workspaceType === 'classroom' ? 'student' : 'child'} accounts.`,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Continue',
-        style: 'destructive',
-        onPress: () => Alert.alert('Are you absolutely sure?', 'Deleted accounts and data cannot be recovered.', [
-          { text: 'Keep Account', style: 'cancel' },
-          {
-            text: 'Delete Permanently',
-            style: 'destructive',
-            onPress: () => void deleteKudosAccount(access)
-              .then(onSignOut)
-              .catch((value) => Alert.alert('Could Not Delete Account', value instanceof Error ? value.message : String(value))),
-          },
-        ]),
-      },
-    ],
-  );
-}
 
-export function PurchaseAccessScreen({ access, entitlement, error, onClose, onRefresh, onSignOut, onVerified, userId }: Props) {
+
+export function PurchaseAccessScreen({ access, entitlement, error, onClose, onRefresh, onSignOut, onVerified, userId, workspaces, onWorkspaceSelect, onWorkspaceRefresh }: Props) {
   const theme = useColorScheme() === 'dark' ? darkTheme : lightTheme;
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
   const [storeError, setStoreError] = useState<string | null>(null);
   const deliveredTransactions = useRef(new Set<string>());
+  const { deleting, confirmWorkspaceDeletion, confirmEntireAccountDeletion } = useAccountDeletion(access, onSignOut, onWorkspaceRefresh);
 
   const handlePurchase = async (purchase: Purchase) => {
     const key = purchase.transactionId || purchase.id;
@@ -211,7 +190,7 @@ export function PurchaseAccessScreen({ access, entitlement, error, onClose, onRe
 
   const expired = entitlement.status === 'expired';
   const trialActive = entitlement.status === 'trial' && entitlement.canAccess;
-  const busy = Boolean(pendingProductId);
+  const busy = Boolean(pendingProductId) || deleting;
   const classroom = access.workspaceType === 'classroom';
   const workspaceNoun = classroom ? 'classroom' : 'family';
   const memberDescription = classroom ? 'every teacher and student profile' : 'every adult and child profile';
@@ -226,6 +205,7 @@ export function PurchaseAccessScreen({ access, entitlement, error, onClose, onRe
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
+        <PurchaseWorkspaceSwitcher access={access} workspaces={workspaces} onSelect={onWorkspaceSelect} disabled={busy} theme={theme} />
         {onClose ? <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}><Text style={[styles.closeButtonText, { color: theme.primary }]}>‹ Back to Settings</Text></Pressable> : null}
         <View style={[styles.hero, { backgroundColor: theme.surfaceStrong }]}>
           <Text style={styles.sparkles}>✦  ★  ✦</Text>
@@ -288,23 +268,26 @@ export function PurchaseAccessScreen({ access, entitlement, error, onClose, onRe
           <Text style={{ color: theme.textMuted }}>•</Text>
           <Pressable onPress={() => void Linking.openURL(PRIVACY_URL)}><Text style={[styles.legalLink, { color: theme.primary }]}>Privacy Policy</Text></Pressable>
         </View>
-        <Pressable onPress={onSignOut} style={styles.signOut}><Text style={[styles.signOutText, { color: theme.danger }]}>Sign out</Text></Pressable>
-        <Pressable onPress={() => confirmDeleteAccount(access, onSignOut)} style={styles.deleteAccess}><Text style={[styles.deleteAccessText, { color: theme.danger }]}>Delete Account &amp; Data</Text></Pressable>
+        <Pressable disabled={busy} onPress={onSignOut} style={styles.signOut}><Text style={[styles.signOutText, { color: theme.danger }]}>Sign out</Text></Pressable>
+        <Pressable disabled={busy} onPress={confirmWorkspaceDeletion} style={styles.deleteAccess}><Text style={[styles.deleteAccessText, { color: theme.danger }]}>Delete {classroom ? 'Classroom' : 'Family'} Workspace</Text></Pressable>
+        <Pressable disabled={busy} onPress={confirmEntireAccountDeletion} style={styles.deleteAccess}><Text style={[styles.deleteAccessText, { color: theme.danger }]}>Delete My Entire Account</Text></Pressable>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-export function WorkspaceAccessPausedScreen({ access, entitlement, error, onRefresh, onSignOut }: Omit<Props, 'onVerified' | 'userId'>) {
+export function WorkspaceAccessPausedScreen({ access, entitlement, error, onRefresh, onSignOut, workspaces, onWorkspaceSelect, onWorkspaceRefresh }: Omit<Props, 'onVerified' | 'userId'>) {
   const theme = useColorScheme() === 'dark' ? darkTheme : lightTheme;
   const child = access.role === 'child';
+  const { deleting, confirmWorkspaceDeletion, confirmEntireAccountDeletion } = useAccountDeletion(access, onSignOut, onWorkspaceRefresh);
   const classroom = access.workspaceType === 'classroom';
   const workspaceNoun = classroom ? 'classroom' : 'family';
   const remaining = trialDaysRemaining(entitlement);
   const offlineUnavailable = Boolean(error && entitlement.source === 'offline' && !entitlement.canAccess);
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}>
-      <View style={styles.pausedRoot}>
+      <ScrollView contentContainerStyle={styles.pausedRoot}>
+        <PurchaseWorkspaceSwitcher access={access} workspaces={workspaces} onSelect={onWorkspaceSelect} disabled={deleting} theme={theme} />
         <View style={[styles.pausedIcon, { backgroundColor: theme.rewardSoft }]}><Text style={styles.pausedEmoji}>{child ? '🏆' : '🔐'}</Text></View>
         <Text style={[styles.pausedTitle, { color: theme.text }]}>{offlineUnavailable ? 'Connect to check access' : child ? `Ask your ${classroom ? 'teacher' : 'parent'}` : `${classroom ? 'Classroom' : 'Family'} access needs attention`}</Text>
         <Text style={[styles.pausedText, { color: theme.textMuted }]}>
@@ -322,8 +305,9 @@ export function WorkspaceAccessPausedScreen({ access, entitlement, error, onRefr
           <Text style={{ color: theme.textMuted }}>•</Text>
           <Pressable onPress={() => void Linking.openURL(PRIVACY_URL)}><Text style={[styles.legalLink, { color: theme.primary }]}>Privacy Policy</Text></Pressable>
         </View>
-        <Pressable onPress={() => confirmDeleteAccount(access, onSignOut)} style={styles.deleteAccess}><Text style={[styles.deleteAccessText, { color: theme.danger }]}>Delete Account &amp; Data</Text></Pressable>
-      </View>
+        <Pressable disabled={deleting} onPress={confirmWorkspaceDeletion} style={styles.deleteAccess}><Text style={[styles.deleteAccessText, { color: theme.danger }]}>{child ? 'Delete My Account' : `Delete ${classroom ? 'Classroom' : 'Family'} Workspace`}</Text></Pressable>
+        {!child ? <Pressable disabled={deleting} onPress={confirmEntireAccountDeletion} style={styles.deleteAccess}><Text style={[styles.deleteAccessText, { color: theme.danger }]}>Delete My Entire Account</Text></Pressable> : null}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -389,7 +373,7 @@ const styles = StyleSheet.create({
   deleteAccess: { alignItems: 'center', padding: 10 },
   deleteAccessText: { fontSize: 11, fontWeight: '800', textDecorationLine: 'underline' },
   pressed: { opacity: 0.65 },
-  pausedRoot: { alignItems: 'center', alignSelf: 'center', flex: 1, justifyContent: 'center', maxWidth: 520, padding: 28, width: '100%' },
+  pausedRoot: { alignItems: 'center', alignSelf: 'center', flexGrow: 1, justifyContent: 'center', maxWidth: 520, padding: 28, width: '100%' },
   pausedIcon: { alignItems: 'center', borderRadius: 40, height: 80, justifyContent: 'center', width: 80 },
   pausedEmoji: { fontSize: 39 },
   pausedTitle: { fontSize: 27, fontWeight: '900', marginTop: 20, textAlign: 'center' },

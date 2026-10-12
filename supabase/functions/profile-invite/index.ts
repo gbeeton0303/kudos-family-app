@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 import { requireUser, serviceClient } from '../_shared/supabase.ts';
+import { childLoginAction } from './child-login.ts';
 
 const CHILD_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -18,6 +19,13 @@ Deno.serve(async (req) => {
   try {
     const { client, user } = await requireUser(req);
     const body = await req.json();
+    if (body.action === 'set-child-login' || body.action === 'reset-child-login') {
+      const admin = serviceClient();
+      const { data: allowed, error } = await admin.rpc('consume_profile_invite_attempt', { p_key_hash: await sha256(`child-login:${user.id}`) });
+      if (error) throw error;
+      if (!allowed) return jsonResponse({ error: 'Too many attempts. Wait 15 minutes and try again.' }, 429);
+      return jsonResponse({ data: await childLoginAction(admin, user, body) });
+    }
     if (body.action === 'create') {
       const { data, error } = await client.rpc('create_profile_invite', { p_profile_id: body.profileId, p_hours: body.hours ?? 168 });
       if (error) throw error;
@@ -58,7 +66,7 @@ Deno.serve(async (req) => {
       if (profile.linked_user_id) {
         const { data: oldAccount, error: accountError } = await admin.auth.admin.getUserById(profile.linked_user_id);
         if (accountError) throw new Error(`The old child login could not be checked. ${accountError.message}`);
-        if (oldAccount.user?.is_anonymous) {
+        if (oldAccount.user?.is_anonymous || oldAccount.user?.app_metadata?.account_type === 'child') {
           const { error: deleteError } = await admin.auth.admin.deleteUser(profile.linked_user_id);
           if (deleteError) throw new Error(`The old child login could not be revoked. ${deleteError.message}`);
         } else {

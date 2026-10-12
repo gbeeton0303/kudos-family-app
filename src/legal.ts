@@ -4,7 +4,7 @@ export const PRIVACY_URL = 'https://www.mykudosfamily.com/privacy';
 // Update these values whenever the public documents materially change. A
 // matching database migration should whitelist each new acceptance version.
 export const TERMS_VERSION = '2026-09-06';
-export const PRIVACY_VERSION = '2026-09-06';
+export const PRIVACY_VERSION = '2026-10-10';
 
 export type LegalAcceptance = {
   termsVersion: string;

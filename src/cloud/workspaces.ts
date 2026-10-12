@@ -67,6 +67,15 @@ async function throwFunctionError(error: unknown, functionName: string): Promise
   throw new Error(detail);
 }
 
+export async function saveChildLogin(username: string, password: string, profileId?: string) {
+  const { data, error } = await requireSupabase().functions.invoke('profile-invite', { body: {
+    action: profileId ? 'reset-child-login' : 'set-child-login', username, password, profileId,
+  } });
+  if (error) await throwFunctionError(error, 'profile-invite');
+  if (data?.error) throw new Error(data.error);
+  if (!data?.data?.saved) throw new Error('Child login was not saved. Update the profile-invite function and try again.');
+}
+
 export async function loadWorkspaceAccess(userId: string, childOnly = false): Promise<WorkspaceAccess[]> {
   const client = requireSupabase();
   const { data: memberships, error } = await client

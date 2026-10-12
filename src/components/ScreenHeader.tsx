@@ -3,18 +3,18 @@ import type { AppTheme } from '../theme';
 import { toDisplayTitle } from '../utils/titleCase';
 
 type ScreenHeaderProps = {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   theme: AppTheme;
 };
 
 export function ScreenHeader({ eyebrow, title, subtitle, theme }: ScreenHeaderProps) {
   return (
     <View style={styles.container}>
-      <Text style={[styles.eyebrow, { color: theme.primary }]}>{eyebrow}</Text>
+      {eyebrow ? <Text style={[styles.eyebrow, { color: theme.primary }]}>{eyebrow}</Text> : null}
       <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={2} style={[styles.title, { color: theme.text }]}>{toDisplayTitle(title)}</Text>
-      <Text style={[styles.subtitle, { color: theme.textMuted }]}>{subtitle}</Text>
+      {subtitle ? <Text style={[styles.subtitle, { color: theme.textMuted }]}>{subtitle}</Text> : null}
     </View>
   );
 }

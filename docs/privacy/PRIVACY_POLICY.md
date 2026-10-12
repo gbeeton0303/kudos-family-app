@@ -1,7 +1,8 @@
 # Kudos Family Privacy Policy
 
-**Effective date: September 6, 2026**  
-**Policy version: 2026-09-06**
+**Effective date: October 10, 2026**
+
+**Policy version: 2026-10-10**
 
 Kudos Family ("Kudos," "we," "us," or "our") helps parents, guardians, teachers, and other authorized adults manage tasks, rewards, and progress for children or students. This policy explains the information processed by the Kudos Family mobile application, the Kudos Cloud service, and related support services.
 
@@ -21,7 +22,9 @@ When an adult creates a Kudos Cloud account, we process the adult's email addres
 
 ### Child or student profile information
 
-An authorized adult may provide a child's name or nickname, a built-in avatar or optional photo, appearance preferences, currency and storage-container preferences, and the anonymous account identifier used to link that profile to a child device. We encourage adults to use a nickname and built-in avatar when appropriate.
+An authorized adult may provide a child's name or nickname, a built-in avatar or optional photo, appearance preferences, currency and storage-container preferences, and the account identifier used to link that profile to a child device. We encourage adults to use a nickname and built-in avatar when appropriate.
+
+After connecting with an adult-generated code, a child may optionally choose a username and password to sign in again. Usernames should be nicknames, not full names. A child does not provide a real email address: an internal, non-deliverable login identifier allows our authentication provider to manage the password securely. Supabase stores the password as a protected hash; Kudos does not store readable passwords in its app data, logs, or profile records. The username is linked to the existing child profile solely for authentication. A parent or teacher managing that profile can reset its username and password or revoke its login through device replacement. Children who do not choose a login can continue using their linked session and reconnect through an adult-issued replacement code if needed.
 
 ### Tasks, rewards, and activity
 
@@ -58,13 +61,13 @@ We use information to:
 - verify App Store transactions and provide, restore, and share workspace access;
 - comply with applicable law and enforce our Terms of Service.
 
-The current release does not use third-party advertising, behavioral profiling, cross-app tracking, analytics SDKs, crash-reporting SDKs, or subscriptions. StoreKit processes a free-trial non-consumable and a one-time lifetime non-consumable through Apple.
+The current release does not use third-party advertising, behavioral profiling, cross-app tracking, analytics SDKs, crash-reporting SDKs, or subscriptions. The seven-day trial is managed by Kudos Cloud and does not auto-renew. StoreKit processes the one-time lifetime purchase through Apple.
 
 ## Children's information and adult controls
 
 Kudos limits child accounts to the profile and workspace authorized by the adult-generated code. A linked child can view their own tasks, rewards, balance, and history; submit task completion requests; open rewards delivered to them; and change limited profile preferences. Database access controls prevent a child account from managing adults or accessing unrelated profiles.
 
-An authorized adult can view, correct, export through ordinary app views, or delete a child profile and its associated information. An adult can revoke a lost child's anonymous login and issue a replacement code while preserving the profile's history. Parents or guardians may contact us to request access, correction, or deletion. We will take reasonable steps to verify the requester's authority before acting.
+An authorized adult can view, correct, export through ordinary app views, or delete a child profile and its associated information. An adult can reset a child's username/password login, or revoke a lost child's login and issue a replacement code while preserving the profile's history. Parents or guardians may contact us to request access, correction, or deletion. We will take reasonable steps to verify the requester's authority before acting.
 
 We do not knowingly ask a child for an email address, postal address, phone number, precise location, contacts, payment information, health information, or advertising identifier. If you believe a child provided personal information without appropriate adult authorization, contact us so we can review and delete it when required.
 
@@ -90,7 +93,7 @@ Kudos may be used in a local-only demo mode. Information in local-only mode rema
 
 We retain cloud information while an account or workspace remains active and as reasonably needed to provide the service, maintain security, resolve disputes, or comply with law.
 
-Adults can delete a child profile in the app. In **Settings → Account**, a family manager can permanently delete the family workspace, its profiles, tasks, rewards, history, private photos, and linked child accounts. A linked child can delete their own anonymous child account and linked profile. Account deletion removes active service data; limited records may remain temporarily in encrypted provider backups until those backups age out under the provider's normal retention cycle, or longer if law requires.
+Adults can delete a child profile in the app. In **Settings → Account**, a manager can permanently delete a selected family or classroom workspace, its profiles, tasks, rewards, history, private photos, and associated logins as described by the confirmation. **Delete My Entire Account** removes the adult's personal login and workspaces they created, and leaves joined workspaces without deleting those workspaces or other adults' logins. A linked child can delete their own child account and linked profile. Account deletion removes active service data; limited records may remain temporarily in encrypted provider backups until those backups age out under the provider's normal retention cycle, or longer if law requires.
 
 Transactional support communications may be retained as reasonably necessary to resolve the request and document the response. We do not retain invitation codes in readable form; codes are stored as one-way hashes and expire or are revoked.
 

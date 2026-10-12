@@ -1,4 +1,5 @@
-import { Image, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { CachedAssetImage } from './CachedAssetImage';
 import type { AppTheme } from '../theme';
 
 type CategoryIconProps = {
@@ -28,7 +29,7 @@ export function CategoryIcon({ kind, size = 48, backgroundColor, theme }: Catego
         },
       ]}
     >
-      <Image
+      <CachedAssetImage
         resizeMode="contain"
         source={SOURCES[kind]}
         style={[styles.image, { height: size * 0.88, width: size * 0.88 }]}

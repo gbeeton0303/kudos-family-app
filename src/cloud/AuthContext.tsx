@@ -3,7 +3,9 @@ import { Linking } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { requireSupabase, supabase } from './supabase';
 import type { AuthContextValue } from './types';
-import { acceptProfileInvite } from './workspaces';
+import { acceptProfileInvite, saveChildLogin } from './workspaces';
+import { childLoginAddress } from './childIdentity';
+import { completeChildLoginSetup } from './completeChildLoginSetup';
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -68,6 +70,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: session?.user ?? null,
     isLoading,
     isRecoveringPassword,
+    signInChild: async (username, password) => {
+      const client = requireSupabase();
+      const { data, error } = await client.auth.signInWithPassword({ email: childLoginAddress(username), password });
+      if (error) throw new Error('The username or password is incorrect. Ask your parent or teacher to reset your login if needed.');
+      if (data.user?.app_metadata?.account_type !== 'child') {
+        await client.auth.signOut();
+        throw new Error('This is not a child login. Use adult Sign In instead.');
+      }
+    },
+    setupChildLogin: async (username, password) => {
+      if (!session?.user.id) throw new Error('Connect your child profile before choosing a login.');
+      const client = requireSupabase();
+      await completeChildLoginSetup(username, password, session.user.id, saveChildLogin,
+        (credentials) => client.auth.signInWithPassword(credentials), () => client.auth.signOut());
+    },
     signIn: async (email, password) => {
       const client = requireSupabase();
       const { error } = await client.auth.signInWithPassword({ email: email.trim(), password });

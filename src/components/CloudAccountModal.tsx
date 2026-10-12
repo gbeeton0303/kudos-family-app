@@ -1,18 +1,28 @@
 import { useEffect, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { cancelAdultInvite, createAdultInvite, createProfileInvite, createWorkspace, listAdultAccess, removeAdultAccess, renameWorkspace, replaceProfileInvite, type AdultAccessList } from '../cloud/workspaces';
-import { deleteKudosAccount } from '../cloud/accountActions';
+import { cancelAdultInvite, createAdultInvite, createProfileInvite, createWorkspace, listAdultAccess, removeAdultAccess, renameWorkspace, replaceProfileInvite, saveChildLogin, type AdultAccessList } from '../cloud/workspaces';
+import { useAuth } from '../cloud/AuthContext';
+import { normalizeChildUsername, validateChildPassword } from '../cloud/childIdentity';
+import { ChildLoginSetupScreen } from '../screens/ChildLoginSetupScreen';
+import { useAccountDeletion } from '../cloud/useAccountDeletion';
 import type { WorkspaceAccess, CloudSyncStatus, WorkspaceType } from '../cloud/types';
 import { getProfileAccent } from '../data/profileStyles';
 import type { ChildProfile } from '../types';
 import type { AppTheme } from '../theme';
 import { ProfileAvatar } from './ProfileAvatar';
 
-export function CloudAccountModal({ visible, access, workspaces, email, profiles, syncStatus, onClose, onRefresh, onWorkspaceRefresh, onWorkspaceTypeChange, onSignOut, theme }: { visible: boolean; access: WorkspaceAccess; workspaces: WorkspaceAccess[]; email: string; profiles: ChildProfile[]; syncStatus: CloudSyncStatus; onClose: () => void; onRefresh: () => void; onWorkspaceRefresh: () => Promise<void>; onWorkspaceTypeChange?: (type: WorkspaceType) => Promise<void>; onSignOut: () => void; theme: AppTheme }) {
+export function CloudAccountModal({ visible, section = 'account', access, workspaces, email, profiles, syncStatus, onClose, onRefresh, onWorkspaceRefresh, onWorkspaceTypeChange, onSignOut, theme }: { visible: boolean; section?: 'account' | 'workspaces'; access: WorkspaceAccess; workspaces: WorkspaceAccess[]; email: string; profiles: ChildProfile[]; syncStatus: CloudSyncStatus; onClose: () => void; onRefresh: () => void; onWorkspaceRefresh: () => Promise<void>; onWorkspaceTypeChange?: (type: WorkspaceType) => Promise<void>; onSignOut: () => void; theme: AppTheme }) {
   const [invite, setInvite] = useState<{ code: string; profileId: string; expiresAt: string } | null>(null);
+  const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const auth = useAuth();
+  const [loginProfile, setLoginProfile] = useState<ChildProfile | null>(null);
+  const [childUsername, setChildUsername] = useState('');
+  const [childPassword, setChildPassword] = useState('');
+  const [childConfirmation, setChildConfirmation] = useState('');
+  const [childSetupVisible, setChildSetupVisible] = useState(false);
+  const { deleting, confirmWorkspaceDeletion: confirmDeleteAccount, confirmEntireAccountDeletion } = useAccountDeletion(access, onSignOut, onWorkspaceRefresh, onClose);
   const [adultEmail, setAdultEmail] = useState('');
   const [adultBusy, setAdultBusy] = useState(false);
   const [adultAccess, setAdultAccess] = useState<AdultAccessList>({ adults: [], invitations: [] });
@@ -27,14 +37,15 @@ export function CloudAccountModal({ visible, access, workspaces, email, profiles
   };
 
   useEffect(() => {
+    if (!visible) { setChildPassword(''); setChildConfirmation(''); setLoginProfile(null); setChildSetupVisible(false); setExpandedProfileId(null); setInvite(null); }
     if (visible) {
       setWorkspaceNames({
         family: workspaces.find((item) => item.workspaceType === 'family')?.workspaceName ?? '',
         classroom: workspaces.find((item) => item.workspaceType === 'classroom')?.workspaceName ?? '',
       });
-      void refreshAdults();
+      if (section === 'account') void refreshAdults();
     }
-  }, [visible, access.workspaceId, access.workspaceName, workspaces]);
+  }, [visible, section, access.workspaceId, access.workspaceName, workspaces]);
 
   const saveWorkspaceName = async (type: WorkspaceType) => {
     const workspace = workspaces.find((item) => item.workspaceType === type);
@@ -71,56 +82,29 @@ export function CloudAccountModal({ visible, access, workspaces, email, profiles
   const cancelInvite = (id: string, invitedEmail: string) => Alert.alert('Cancel Invitation?', `The invitation for ${invitedEmail} will stop working.`, [{ text: 'Keep', style: 'cancel' }, { text: 'Cancel Invitation', style: 'destructive', onPress: () => void (async () => { try { await cancelAdultInvite(id); await refreshAdults(); } catch (error) { Alert.alert('Could Not Cancel Invitation', error instanceof Error ? error.message : String(error)); } })() }]);
   const removeAdult = (userId: string, adultAccountEmail: string) => Alert.alert('Remove Adult Access?', `${adultAccountEmail} will no longer be able to manage this family. Their personal login will not be deleted.`, [{ text: 'Keep Access', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: () => void (async () => { try { await removeAdultAccess(access.workspaceId, userId); await refreshAdults(); } catch (error) { Alert.alert('Could Not Remove Adult', error instanceof Error ? error.message : String(error)); } })() }]);
 
-  const confirmDeleteAccount = () => {
-    if (deleting) return;
-    const isChild = access.role === 'child';
-    const groupLabel = access.workspaceType === 'classroom' ? 'classroom' : 'family';
-    const title = isChild ? 'Delete your account?' : `Delete ${groupLabel} workspace?`;
-    const message = isChild
-      ? 'This permanently deletes your child account, linked profile, and the Kudos data associated with that profile. This cannot be undone.'
-      : `This permanently deletes “${access.workspaceName}” and all profiles, tasks, rewards, and history inside this ${groupLabel}. Your other workspace will not be affected. This cannot be undone.`;
 
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: isChild ? 'Delete My Account' : `Delete ${groupLabel === 'family' ? 'Family' : 'Classroom'}`,
-        style: 'destructive',
-        onPress: () => {
-          Alert.alert(
-            'Are you absolutely sure?',
-            'Deleted Kudos accounts and data cannot be recovered.',
-            [
-              { text: 'Keep Account', style: 'cancel' },
-              {
-                text: 'Delete Permanently',
-                style: 'destructive',
-                onPress: async () => {
-                  setDeleting(true);
-                  try {
-                    const result = await deleteKudosAccount(access);
-                    onClose();
-                    if (result?.accountRetained) await onWorkspaceRefresh();
-                    else onSignOut();
-                  } catch (error) {
-                    Alert.alert('Could Not Delete Account', error instanceof Error ? error.message : String(error));
-                  } finally {
-                    setDeleting(false);
-                  }
-                },
-              },
-            ],
-          );
-        },
-      },
-    ]);
-  };
 
   const makeInvite = async (profile: ChildProfile) => {
     setBusyId(profile.id);
     try {
       const result = await createProfileInvite(profile.id);
       setInvite({ code: result.code, profileId: profile.id, expiresAt: result.expires_at });
+      setExpandedProfileId(profile.id);
     } catch (error) { Alert.alert('Could Not Create Invite', error instanceof Error ? error.message : String(error)); }
+    finally { setBusyId(null); }
+  };
+
+  const resetChildLogin = async () => {
+    if (!loginProfile || busyId) return;
+    setBusyId(loginProfile.id);
+    try {
+      const username = normalizeChildUsername(childUsername);
+      validateChildPassword(childPassword);
+      if (childPassword !== childConfirmation) throw new Error('The passwords do not match.');
+      await saveChildLogin(username, childPassword, loginProfile.id);
+      setLoginProfile(null); setChildPassword(''); setChildConfirmation('');
+      Alert.alert('Child Login Updated', `The username is ${username}. Give the new login to your child privately. Their profile and points were preserved. Use Replace device to revoke a lost device’s access.`);
+    } catch (error) { Alert.alert('Could Not Reset Child Login', error instanceof Error ? error.message : String(error)); }
     finally { setBusyId(null); }
   };
 
@@ -137,6 +121,7 @@ export function CloudAccountModal({ visible, access, workspaces, email, profiles
           try {
             const result = await replaceProfileInvite(profile.id);
             setInvite({ code: result.code, profileId: profile.id, expiresAt: result.expires_at });
+            setExpandedProfileId(profile.id);
             Alert.alert('Old Child Access Revoked', 'Use the new code on the replacement device. The child’s profile and history were preserved.');
           } catch (error) {
             Alert.alert('Could Not Replace Child Device', error instanceof Error ? error.message : String(error));
@@ -149,10 +134,10 @@ export function CloudAccountModal({ visible, access, workspaces, email, profiles
   return (
     <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
       <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]}> 
-        <View style={[styles.top, { borderBottomColor: theme.border }]}><Pressable onPress={onClose}><Text style={[styles.topText, { color: theme.textMuted }]}>Close</Text></Pressable><Text style={[styles.topTitle, { color: theme.text }]}>Account</Text><Pressable onPress={onRefresh}><Text style={[styles.topText, { color: theme.primary }]}>Refresh</Text></Pressable></View>
+        <View style={[styles.top, { borderBottomColor: theme.border }]}><Pressable onPress={onClose}><Text style={[styles.topText, { color: theme.textMuted }]}>Close</Text></Pressable><Text style={[styles.topTitle, { color: theme.text }]}>{section === 'account' ? 'Account' : access.workspaceType === 'classroom' ? 'Classroom' : 'Family'}</Text><Pressable onPress={section === 'workspaces' ? () => void onWorkspaceRefresh() : onRefresh}><Text style={[styles.topText, { color: theme.primary }]}>Refresh</Text></Pressable></View>
         <ScrollView contentContainerStyle={styles.content}>
-          <View style={[styles.accountCard, { backgroundColor: theme.surface, borderColor: theme.border }]}><Text style={styles.cloud}>☁️</Text><View style={styles.accountCopy}><Text style={[styles.workspace, { color: theme.text }]}>{access.workspaceName}</Text><Text style={[styles.meta, { color: theme.textMuted }]}>{email} · {access.role} · {syncStatus}</Text></View></View>
-          {manager ? <><Text style={[styles.heading, { color: theme.text }]}>Your Workspaces</Text>{(['family', 'classroom'] as WorkspaceType[]).map((type) => {
+          {section === 'account' ? <View style={[styles.accountCard, { backgroundColor: theme.surface, borderColor: theme.border }]}><Text style={styles.cloud}>☁️</Text><View style={styles.accountCopy}><Text style={[styles.workspace, { color: theme.text }]}>{access.workspaceName}</Text><Text style={[styles.meta, { color: theme.textMuted, textTransform: 'none' }]}>{manager ? email : String(auth.user?.app_metadata?.child_username ?? 'Child profile')} · {access.role}</Text></View></View> : null}
+          {manager && section === 'workspaces' ? <>{(['family', 'classroom'] as WorkspaceType[]).map((type) => {
             const workspace = workspaces.find((item) => item.workspaceType === type);
             const label = type === 'classroom' ? 'Classroom' : 'Family';
             const unchanged = Boolean(workspace && workspaceNames[type].trim() === workspace.workspaceName);
@@ -163,15 +148,56 @@ export function CloudAccountModal({ visible, access, workspaces, email, profiles
               {workspace && workspace.workspaceId !== access.workspaceId && onWorkspaceTypeChange ? <Pressable disabled={renamingWorkspace !== null} onPress={() => { onClose(); void onWorkspaceTypeChange(type); }} style={styles.switchWorkspace}><Text style={[styles.switchWorkspaceText, { color: theme.primary }]}>Open {label}</Text></Pressable> : null}
             </View>;
           })}</> : null}
+          {section === 'account' ? <>
           {manager && access.workspaceType === 'family' ? <><Text style={[styles.heading, { color: theme.text }]}>Adult Account Access</Text><Text style={[styles.help, { color: theme.textMuted }]}>Invite another adult with full access to manage and delete this family account.</Text><View style={styles.adultInviteRow}><TextInput autoCapitalize="none" autoCorrect={false} keyboardType="email-address" onChangeText={setAdultEmail} placeholder="Adult email address" placeholderTextColor={theme.textMuted} style={[styles.adultInput, { backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.text }]} value={adultEmail} /><Pressable disabled={adultBusy} onPress={() => void inviteAdult()} style={[styles.adultInviteButton, { backgroundColor: theme.reward }, adultBusy && styles.disabled]}><Text style={styles.adultInviteText}>{adultBusy ? 'Sending…' : 'Invite'}</Text></Pressable></View>
           <View style={styles.adultList}>{adultAccess.adults.map((adult) => <View key={adult.userId} style={[styles.adultRow, { borderColor: theme.border }]}><View style={styles.accountCopy}><Text style={[styles.profileName, { color: theme.text }]}>{adult.email}{adult.isCurrentUser ? ' (You)' : ''}</Text><Text style={[styles.profileHint, { color: theme.textMuted }]}>Full parent access</Text></View>{!adult.isCurrentUser ? <Pressable onPress={() => removeAdult(adult.userId, adult.email)}><Text style={[styles.removeAdult, { color: theme.danger }]}>Remove</Text></Pressable> : null}</View>)}</View>
           {adultAccess.invitations.map((pending) => <View key={pending.id} style={[styles.adultRow, { borderColor: theme.border }]}><View style={styles.accountCopy}><Text style={[styles.profileName, { color: theme.text }]}>{pending.invited_email}</Text><Text style={[styles.profileHint, { color: theme.textMuted }]}>Pending · expires {new Date(pending.expires_at).toLocaleString()}</Text></View><Pressable onPress={() => cancelInvite(pending.id, pending.invited_email)}><Text style={[styles.removeAdult, { color: theme.danger }]}>Cancel</Text></Pressable></View>)}</> : null}
           {manager ? <><Text style={[styles.heading, { color: theme.text }]}>{access.workspaceType === 'classroom' ? 'Student' : 'Child'} Device Invitations</Text><Text style={[styles.help, { color: theme.textMuted }]}>Create a temporary code for a new {access.workspaceType === 'classroom' ? 'student' : 'child'} login. If a linked device was lost or replaced, revoke it and generate a replacement code without deleting the profile’s history.</Text>
-          <View style={styles.list}>{profiles.map((profile) => <View key={profile.id} style={[styles.profileRow, { backgroundColor: theme.surface, borderColor: theme.border }]}><ProfileAvatar avatar={profile.avatar} size={42} theme={theme} /><View style={styles.profileCopy}><Text style={[styles.profileName, { color: getProfileAccent(profile.colorKey) }]}>{profile.name}</Text><Text style={[styles.profileHint, { color: theme.textMuted }]}>Code expires after 7 days</Text></View><View style={styles.childActions}><Pressable disabled={busyId === profile.id} onPress={() => void makeInvite(profile)}><Text style={[styles.generate, { color: theme.primary }]}>{busyId === profile.id ? '…' : 'Create code'}</Text></Pressable><Pressable disabled={busyId === profile.id} onPress={() => replaceChildDevice(profile)}><Text style={[styles.replaceDevice, { color: theme.danger }]}>Replace device</Text></Pressable></View></View>)}</View>
-          {invite ? <View style={[styles.inviteCard, { backgroundColor: theme.primarySoft }]}><Text style={[styles.inviteLabel, { color: theme.primary }]}>INVITE CODE</Text><Text selectable style={[styles.code, { color: theme.text }]}>{invite.code}</Text><Text style={[styles.expires, { color: theme.textMuted }]}>Expires {new Date(invite.expiresAt).toLocaleString()}</Text></View> : null}</> : <View style={[styles.inviteCard, { backgroundColor: theme.primarySoft }]}><Text style={[styles.inviteLabel, { color: theme.primary }]}>CHILD ACCOUNT</Text><Text style={[styles.help, { color: theme.textMuted }]}>This account is securely linked to one profile. Parent and teacher management data is hidden by database security policies.</Text></View>}
-          <Pressable disabled={deleting} onPress={onSignOut} style={[styles.signOut, { backgroundColor: theme.dangerSoft }, deleting && styles.disabled]}><Text style={[styles.signOutText, { color: theme.danger }]}>Sign out of Kudos Cloud</Text></Pressable>
+          <View style={styles.list}>{profiles.map((profile) => {
+            const expanded = expandedProfileId === profile.id;
+            return <View key={profile.id} style={[deviceStyles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Manage device access for ${profile.name}`} accessibilityState={{ expanded }} onPress={() => setExpandedProfileId(expanded ? null : profile.id)} style={deviceStyles.header}>
+                <ProfileAvatar avatar={profile.avatar} size={42} theme={theme} />
+                <View style={styles.profileCopy}>
+                  <Text style={[styles.profileName, { color: getProfileAccent(profile.colorKey) }]}>{profile.name}</Text>
+                  <Text style={[styles.profileHint, { color: theme.textMuted }]}>{expanded ? 'Device access options' : 'Tap to manage device access'}</Text>
+                </View>
+                <Text style={[deviceStyles.chevron, { color: theme.primary }]}>{expanded ? '⌃' : '⌄'}</Text>
+              </Pressable>
+              {expanded ? <View style={[deviceStyles.options, { borderColor: theme.border }]}>
+                <Pressable accessibilityRole="button" disabled={busyId !== null} onPress={() => void makeInvite(profile)} style={[deviceStyles.action, busyId !== null && styles.disabled]}>
+                  <Text style={[deviceStyles.actionText, { color: theme.primary }]}>{busyId === profile.id ? 'Working…' : 'Create code'}</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" disabled={busyId !== null} onPress={() => replaceChildDevice(profile)} style={[deviceStyles.action, deviceStyles.divider, { borderColor: theme.border }, busyId !== null && styles.disabled]}>
+                  <Text style={[deviceStyles.actionText, { color: theme.danger }]}>Replace device</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" disabled={busyId !== null} onPress={() => { setLoginProfile(profile); setChildUsername(''); setChildPassword(''); setChildConfirmation(''); }} style={[deviceStyles.action, deviceStyles.divider, { borderColor: theme.border }, busyId !== null && styles.disabled]}>
+                  <Text style={[deviceStyles.actionText, { color: theme.primary }]}>Reset child login</Text>
+                </Pressable>
+                {invite?.profileId === profile.id ? <View style={[styles.inviteCard, deviceStyles.codeCard, { backgroundColor: theme.primarySoft }]}>
+                  <Text style={[deviceStyles.codeOwner, { color: theme.primary }]}>Code for {profile.name}</Text>
+                  <Text selectable style={[styles.code, { color: theme.text }]}>{invite.code}</Text>
+                  <Text style={[styles.expires, { color: theme.textMuted }]}>Use this code only for {profile.name}’s profile.</Text>
+                  <Text style={[styles.expires, { color: theme.textMuted }]}>Expires {new Date(invite.expiresAt).toLocaleString()}</Text>
+                </View> : null}
+              </View> : null}
+            </View>;
+          })}</View>
+          </> : <View style={[styles.inviteCard, { backgroundColor: theme.primarySoft }]}><Text style={[styles.inviteLabel, { color: theme.primary }]}>CHILD ACCOUNT</Text><Text style={[styles.help, { color: theme.textMuted }]}>This account is securely linked to one profile. Parent and teacher management data is hidden by database security policies.</Text></View>}
+          {manager && loginProfile ? <View style={[styles.renameCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.renameTitle, { color: theme.text }]}>Reset {loginProfile.name}’s Login</Text>
+            <Text style={[styles.help, { color: theme.textMuted }]}>Choose a username and a new password. This changes the login, not the profile or points. Password resets do not revoke existing devices; use Replace device for that.</Text>
+            <TextInput accessibilityLabel="New child username" editable={!busyId} autoCapitalize="none" autoCorrect={false} maxLength={24} placeholder="Username (4–24 characters)" placeholderTextColor={theme.textMuted} value={childUsername} onChangeText={setChildUsername} style={[styles.renameInput, { color:theme.text,backgroundColor:theme.surfaceMuted,borderColor:theme.border,marginTop:12 }]}/>
+            <TextInput accessibilityLabel="New child password" editable={!busyId} autoCapitalize="none" autoCorrect={false} maxLength={128} secureTextEntry placeholder="New password (at least 8 characters)" placeholderTextColor={theme.textMuted} value={childPassword} onChangeText={setChildPassword} style={[styles.renameInput, { color:theme.text,backgroundColor:theme.surfaceMuted,borderColor:theme.border,marginTop:12 }]}/>
+            <TextInput accessibilityLabel="Confirm child password" editable={!busyId} autoCapitalize="none" autoCorrect={false} maxLength={128} secureTextEntry placeholder="Confirm password" placeholderTextColor={theme.textMuted} value={childConfirmation} onChangeText={setChildConfirmation} style={[styles.renameInput, { color:theme.text,backgroundColor:theme.surfaceMuted,borderColor:theme.border,marginTop:12 }]}/>
+            <Pressable disabled={busyId !== null} onPress={() => void resetChildLogin()} style={[styles.renameButton, { backgroundColor:theme.primary,marginTop:12 }]}><Text style={styles.renameButtonText}>{busyId ? 'Saving…' : 'Save Child Login'}</Text></Pressable>
+            <Pressable disabled={busyId !== null} onPress={() => { setLoginProfile(null); setChildPassword(''); setChildConfirmation(''); }} style={styles.switchWorkspace}><Text style={[styles.switchWorkspaceText, { color:theme.textMuted }]}>Cancel</Text></Pressable>
+          </View> : null}
+          {!manager && auth.user?.is_anonymous ? <Pressable onPress={() => setChildSetupVisible(true)} style={[styles.renameButton, { backgroundColor:theme.primary,marginTop:16 }]}><Text style={styles.renameButtonText}>Choose My Username & Password</Text></Pressable> : null}
+          <Modal visible={childSetupVisible} onRequestClose={() => setChildSetupVisible(false)}><ChildLoginSetupScreen onSkip={() => setChildSetupVisible(false)}/></Modal>
+          <Pressable disabled={deleting} onPress={onSignOut} style={[styles.signOut, { backgroundColor: theme.dangerSoft }, deleting && styles.disabled]}><Text style={[styles.signOutText, { color: theme.danger }]}>Sign Out of Kudos</Text></Pressable>
           <View style={[styles.dangerZone, { borderColor: theme.danger }]}>
-            <Text style={[styles.dangerTitle, { color: theme.danger }]}>Delete Account & Data</Text>
+            <Text style={[styles.dangerTitle, { color: theme.danger }]}>{manager ? 'Delete Workspace' : 'Delete Account & Data'}</Text>
             <Text style={[styles.dangerHelp, { color: theme.textMuted }]}>
               {manager
                 ? `Permanently delete this ${access.workspaceType} workspace and everything stored inside it. Your other workspace will not be affected.`
@@ -181,6 +207,14 @@ export function CloudAccountModal({ visible, access, workspaces, email, profiles
               <Text style={styles.deleteButtonText}>{deleting ? 'Deleting…' : manager ? `Delete ${access.workspaceType === 'classroom' ? 'Classroom' : 'Family'} Workspace` : 'Delete My Account'}</Text>
             </Pressable>
           </View>
+          {manager ? <View style={[styles.dangerZone, { borderColor: theme.danger }]}>
+            <Text style={[styles.dangerTitle, { color: theme.danger }]}>Delete My Entire Account</Text>
+            <Text style={[styles.dangerHelp, { color: theme.textMuted }]}>Delete your personal login and all family/classroom workspaces you created. Leave joined workspaces without deleting them or other adults’ accounts.</Text>
+            <Pressable accessibilityRole="button" disabled={deleting} onPress={confirmEntireAccountDeletion} style={[styles.deleteButton, { backgroundColor: theme.danger }, deleting && styles.disabled]}>
+              <Text style={styles.deleteButtonText}>{deleting ? 'Please wait…' : 'Delete My Entire Account'}</Text>
+            </Pressable>
+          </View> : null}
+          </> : null}
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -194,8 +228,6 @@ const styles = StyleSheet.create({ root: { flex: 1 }, top: { alignItems: 'center
   dangerHelp: { fontSize: 12, lineHeight: 17, marginTop: 5 },
   deleteButton: { alignItems: 'center', borderRadius: 15, marginTop: 14, padding: 14 },
   deleteButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '900' },
-  childActions: { alignItems: 'flex-end', gap: 8 },
-  replaceDevice: { fontSize: 11, fontWeight: '900' },
   renameCard: { borderRadius: 20, borderWidth: 1, marginTop: 16, padding: 16 },
   renameTitle: { fontSize: 16, fontWeight: '900' },
   renameRow: { alignItems: 'center', flexDirection: 'row', gap: 9, marginTop: 13 },
@@ -207,4 +239,16 @@ const styles = StyleSheet.create({ root: { flex: 1 }, top: { alignItems: 'center
   switchWorkspace: { alignSelf: 'flex-start', marginTop: 12, paddingVertical: 4 },
   switchWorkspaceText: { fontSize: 13, fontWeight: '900' },
   disabled: { opacity: 0.55 }
+});
+
+const deviceStyles = StyleSheet.create({
+  card: { borderRadius: 18, borderWidth: 1, overflow: 'hidden' },
+  header: { alignItems: 'center', flexDirection: 'row', gap: 11, minHeight: 72, padding: 14 },
+  chevron: { fontSize: 25, fontWeight: '800', width: 26, textAlign: 'center' },
+  options: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 10 },
+  action: { justifyContent: 'center', minHeight: 50, paddingHorizontal: 10, paddingVertical: 14 },
+  actionText: { fontSize: 14, fontWeight: '800' },
+  divider: { borderTopWidth: StyleSheet.hairlineWidth },
+  codeCard: { marginTop: 6 },
+  codeOwner: { fontSize: 16, fontWeight: '900', textAlign: 'center' },
 });

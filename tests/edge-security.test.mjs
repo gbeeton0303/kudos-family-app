@@ -12,6 +12,24 @@ function database(seed = {}) {
   const reads = [];
   const db = {
     tables, writes, reads, beforeWrite: null, readError: null,
+    async rpc(name, args) {
+      assert.equal(name, 'commit_local_import');
+      const marker = (tables.migration_imports ?? []).find(row => row.workspace_id === args.p_workspace_id && row.user_id === args.p_user_id);
+      if (marker) {
+        if (marker.payload_hash && marker.payload_hash !== args.p_payload_hash) return { error: Error('A different import has already completed') };
+        return { data: { imported: true, alreadyImported: true }, error: null };
+      }
+      const snapshot = structuredClone(tables), length = writes.length;
+      try {
+        await writeImportPlan(db, args.p_workspace_id, args.p_writes);
+        (tables.migration_imports ??= []).push({ workspace_id: args.p_workspace_id, user_id: args.p_user_id, payload_hash: args.p_payload_hash });
+        return { data: { imported: true }, error: null };
+      } catch (error) {
+        for (const key of Object.keys(tables)) delete tables[key];
+        Object.assign(tables, snapshot); writes.length = length;
+        return { data: null, error };
+      }
+    },
     from(table) {
       let operation = 'select', payload, options = {}, single = false;
       const predicates = [];
@@ -191,6 +209,54 @@ function localState() {
     rewardDeliveries: [{ id: 'local-delivery', rewardId: 'local-r', profileId: 'local-p', rewardTitle: 'Movie',
       rewardIcon: { type: 'preset', value: 'movie' }, cost: 5, balanceBefore: 5, balanceAfter: 0, sentAt: when, status: 'waiting' }],
   };
+}
+
+test('import preserves saved earnings, actual early-redemption costs, reset boundaries and archive status', async () => {
+  const state = localState();
+  const first = '2026-10-01T12:00:00.000Z', second = '2026-10-02T12:00:00.000Z';
+  state.tasks[0].amount = 99;
+  state.tasks[0].completionEvents['local-p'] = [first, second];
+  state.tasks[0].completionAmounts = { 'local-p': [5, 7] };
+  state.tasks[0].archivedAt = second;
+  state.tasks[0].assignedProfileIds = [];
+  state.rewards[0].cost = 100;
+  state.rewards[0].redemptionEvents['local-p'] = [first, second];
+  state.rewards[0].redemptionCosts = { 'local-p': [3, 0] };
+  state.profiles[0].balanceResetEvents = [first];
+  const db = database({ workspace_members: [member()] });
+  assert.equal((await migrationEndpoint(db)({ workspaceId: 'family-a', state })).status, 200);
+  assert.deepEqual(db.tables.currency_ledger.filter(row => row.transaction_type === 'task_completion').map(row => row.amount), [5, 7]);
+  assert.deepEqual(db.tables.reward_redemptions.map(row => row.cost), [3, 0]);
+  assert.deepEqual(db.tables.currency_ledger.filter(row => row.transaction_type === 'reward_redemption').map(row => row.amount), [-3, -0]);
+  assert.equal(db.tables.profile_balance_resets[0].reset_at, first);
+  assert.equal(db.tables.profile_balance_resets[0].profile_id, db.tables.child_profiles[0].id);
+  assert.equal(db.tables.task_templates[0].archived_at, second);
+  assert.ok(db.tables.task_completions.every(completion => db.tables.currency_ledger.some(ledger => ledger.source_id === completion.id && ledger.transaction_type === 'task_completion')));
+});
+
+test('equal-timestamp imported events preserve separate awards and aligned historical amounts', async () => {
+  const state = localState();
+  const when = state.tasks[0].completionEvents['local-p'][0];
+  state.tasks[0].completionEvents['local-p'] = [when, when];
+  state.tasks[0].completionAmounts = { 'local-p': [5, 7] };
+  const db = database({ workspace_members: [member()] });
+  assert.equal((await migrationEndpoint(db)({ workspaceId: 'family-a', state })).status, 200);
+  assert.equal(db.tables.task_completions.length, 2);
+  assert.notEqual(db.tables.task_completions[0].period_key, db.tables.task_completions[1].period_key);
+  assert.deepEqual(db.tables.currency_ledger.filter(row => row.transaction_type === 'task_completion').map(row => row.amount), [5, 7]);
+});
+
+for (const problem of ['negative award', 'misaligned costs', 'foreign amounts', 'invalid reset']) {
+  test(`import rejects ${problem} before any writes`, async () => {
+    const state = localState();
+    if (problem === 'negative award') state.tasks[0].completionAmounts = { 'local-p': [-1] };
+    if (problem === 'misaligned costs') state.rewards[0].redemptionCosts = { 'local-p': [1, 2] };
+    if (problem === 'foreign amounts') state.tasks[0].completionAmounts = { 'foreign-p': [5] };
+    if (problem === 'invalid reset') state.profiles[0].balanceResetEvents = ['not-a-date'];
+    const db = database({ workspace_members: [member()] });
+    assert.equal((await migrationEndpoint(db)({ workspaceId: 'family-a', state })).status, 400);
+    assert.equal(db.writes.length, 0);
+  });
 }
 
 test('import remaps every entity, history key, assignment, and reference by workspace', async () => {

@@ -75,6 +75,7 @@ export type ChildReward = {
   icon: ItemIcon;
   assignedProfileIds: string[];
   redemptionEvents: Record<string, string[]>;
+  redemptionAccountingEvents?: Record<string, string[]>;
   redemptionCosts?: Record<string, number[]>;
   createdAt: string;
   /** Hidden from assignment screens while retained for balance history. */

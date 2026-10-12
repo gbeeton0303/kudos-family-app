@@ -33,25 +33,21 @@ import {
   fetchCloudFamilyState,
   type CloudMutation,
 } from '../cloud/repository';
-import { requireSupabase } from '../cloud/supabase';
+import { createScopedCloudClient, requireSupabase } from '../cloud/supabase';
+import { useAuth } from '../cloud/AuthContext';
+import { cloudStorageKeys, createCloudSessionScope } from '../cloud/cloudStorageScope';
+import { retryCloudRead } from '../cloud/retryCloudRead';
 import type { CloudSyncStatus, FailedSyncChange } from '../cloud/types';
 import type { FamilyDataController, NewProfileInput } from './familyController';
 
-const CACHE_PREFIX = '@brightsteps/cloud-cache-v1';
-const QUEUE_PREFIX = '@brightsteps/cloud-queue-v1';
-const FAILED_PREFIX = '@brightsteps/cloud-failed-v1';
-
-
-function cacheKey(workspaceId: string) {
-  return `${CACHE_PREFIX}/${workspaceId}`;
+function cacheKey(workspaceId: string, userId: string) {
+  return cloudStorageKeys(userId, workspaceId).cache;
 }
-
-function queueKey(workspaceId: string) {
-  return `${QUEUE_PREFIX}/${workspaceId}`;
+function queueKey(workspaceId: string, userId: string) {
+  return cloudStorageKeys(userId, workspaceId).queue;
 }
-
-function failedKey(workspaceId: string) {
-  return `${FAILED_PREFIX}/${workspaceId}`;
+function failedKey(workspaceId: string, userId: string) {
+  return cloudStorageKeys(userId, workspaceId).failed;
 }
 
 function errorMessage(error: unknown): string {
@@ -86,7 +82,11 @@ function isPermanentMutationError(message: string) {
 }
 
 export function useCloudFamilyData(workspaceId: string): FamilyDataController {
+  const { user } = useAuth();
+  const userId = user?.id ?? '';
+  const scope = useMemo(() => createCloudSessionScope(userId), [userId, workspaceId]);
   const [family, setFamily] = useState<FamilyState>(() => createInitialFamilyState());
+  const familyRef = useRef(family);
   const [isHydrated, setIsHydrated] = useState(false);
   const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('loading');
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -95,60 +95,105 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
   const failedRef = useRef<FailedSyncChange[]>([]);
   const queueRef = useRef<CloudMutation[]>([]);
   const flushingRef = useRef(false);
+  const refreshInFlight = useRef<Promise<FamilyState | null> | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const storageWritesRef = useRef<Promise<void>>(Promise.resolve());
   const taskTapGuardRef = useRef(new Set<string>());
 
+  useEffect(() => {
+    const { data } = requireSupabase().auth.onAuthStateChange((_event, session) => {
+      // Synchronous invalidation occurs before React renders the new account.
+      scope.observeUser(session?.user.id);
+    });
+    return () => { scope.stop(); data.subscription.unsubscribe(); };
+  }, [scope]);
+
+  const sessionClient = useCallback(async () => {
+    scope.assertActive();
+    const { data, error } = await requireSupabase().auth.getSession();
+    if (error) throw error;
+    scope.observeUser(data.session?.user.id);
+    scope.assertActive();
+    if (!data.session) throw new Error('Sign in before syncing.');
+    return createScopedCloudClient(data.session, scope);
+  }, [scope]);
+
+  const writeStorage = useCallback((key: string, value: string) => {
+    // Serialize snapshots captured at enqueue time so late writes cannot replace
+    // a newer queue or cache with an older one.
+    const write = storageWritesRef.current.catch(() => undefined).then(() => AsyncStorage.setItem(key, value));
+    storageWritesRef.current = write;
+    return write;
+  }, []);
+
   const persistCache = useCallback((next: FamilyState) => {
-    AsyncStorage.setItem(cacheKey(workspaceId), JSON.stringify(next)).catch(() => undefined);
-  }, [workspaceId]);
+    void writeStorage(cacheKey(workspaceId, userId), JSON.stringify(next)).catch(() => undefined);
+  }, [userId, workspaceId, writeStorage]);
+
+  const applySnapshot = useCallback((next: FamilyState) => {
+    if (!scope.isActive()) return;
+    familyRef.current = next;
+    setFamily(next);
+    persistCache(next);
+  }, [persistCache, scope]);
 
   const updateFamily = useCallback((updater: (current: FamilyState) => FamilyState) => {
-    setFamily((current) => {
-      const next = updater(current);
-      persistCache(next);
-      return next;
-    });
-  }, [persistCache]);
+    if (!scope.isActive()) return;
+    // Apply outside React's deferred state updater. Sequential actions always
+    // read the latest optimistic snapshot, even before React renders it.
+    applySnapshot(updater(familyRef.current));
+  }, [applySnapshot, scope]);
 
   const refresh = useCallback(async () => {
+    if (!scope.isActive()) return null;
+    if (refreshInFlight.current) return refreshInFlight.current;
     setSyncStatus((current) => current === 'loading' ? 'loading' : 'syncing');
+    const request = (async () => {
     try {
-      const next = await fetchCloudFamilyState(workspaceId);
-      setFamily(next);
-      persistCache(next);
+      const next = await retryCloudRead(async () => fetchCloudFamilyState(workspaceId, await sessionClient()));
+      if (!scope.isActive() || queueRef.current.length) return null;
+      applySnapshot(next);
       setSyncError(null);
       setSyncStatus('synced');
       return next;
     } catch (error) {
+      if (!scope.isActive()) return null;
       setSyncError(errorMessage(error));
-      setSyncStatus((current) => current === 'loading' ? 'offline' : 'offline');
+      setSyncStatus('offline');
       return null;
     }
-  }, [persistCache, workspaceId]);
+    })();
+    refreshInFlight.current = request;
+    try { return await request; }
+    finally { if (refreshInFlight.current === request) refreshInFlight.current = null; }
+  }, [applySnapshot, scope, sessionClient, workspaceId]);
 
   const persistQueue = useCallback(async () => {
-    await AsyncStorage.setItem(queueKey(workspaceId), JSON.stringify(queueRef.current));
-  }, [workspaceId]);
+    await writeStorage(queueKey(workspaceId, userId), JSON.stringify(queueRef.current));
+  }, [userId, workspaceId, writeStorage]);
 
   const persistFailed = useCallback(async () => {
-    await AsyncStorage.setItem(failedKey(workspaceId), JSON.stringify(failedRef.current));
+    await writeStorage(failedKey(workspaceId, userId), JSON.stringify(failedRef.current));
+    if (!scope.isActive()) return;
     setFailedSyncChanges([...failedRef.current]);
-  }, [workspaceId]);
+  }, [scope, userId, workspaceId, writeStorage]);
 
   const flushQueue = useCallback(async () => {
-    if (flushingRef.current || queueRef.current.length === 0) return;
+    if (!scope.isActive() || flushingRef.current || queueRef.current.length === 0) return;
     flushingRef.current = true;
     setSyncStatus('syncing');
     let permanentFailureCount = 0;
     try {
-      while (queueRef.current.length) {
+      while (scope.isActive() && queueRef.current.length) {
         const mutation = queueRef.current[0];
         try {
-          await executeCloudMutation(workspaceId, mutation);
+          await executeCloudMutation(workspaceId, mutation, await sessionClient());
+          if (!scope.isActive()) return;
           queueRef.current = queueRef.current.slice(1);
           setPendingMutationCount(queueRef.current.length);
           await persistQueue();
         } catch (error) {
+          if (!scope.isActive()) return;
           const message = errorMessage(error);
           // Real connectivity failures pause the queue for retry. Application,
           // RPC, constraint and Edge Function failures are isolated so one
@@ -165,35 +210,42 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
           await Promise.all([persistQueue(), persistFailed()]);
         }
       }
-      await refresh();
-      setSyncError(permanentFailureCount ? `${permanentFailureCount} change${permanentFailureCount === 1 ? '' : 's'} need review.` : null);
-      setSyncStatus('synced');
+      const snapshot = await refresh();
+      // A failed snapshot must not be overwritten with a false synced state.
+      if (snapshot) {
+        setSyncError(permanentFailureCount ? `${permanentFailureCount} change${permanentFailureCount === 1 ? '' : 's'} need review.` : null);
+        setSyncStatus('synced');
+      }
     } catch (error) {
+      if (!scope.isActive()) return;
       setSyncError(errorMessage(error));
       setSyncStatus('offline');
     } finally {
       flushingRef.current = false;
     }
-  }, [persistFailed, persistQueue, refresh, workspaceId]);
+  }, [persistFailed, persistQueue, refresh, scope, sessionClient, workspaceId]);
 
   const enqueue = useCallback((mutation: CloudMutation) => {
+    if (!scope.isActive()) return;
     queueRef.current = [...queueRef.current, mutation];
     setPendingMutationCount(queueRef.current.length);
     setSyncStatus('syncing');
-    void persistQueue().then(() => flushQueue());
-  }, [flushQueue, persistQueue]);
+    void persistQueue().then(() => flushQueue()).catch((error) => {
+      if (scope.isActive()) { setSyncError(errorMessage(error)); setSyncStatus('offline'); }
+    });
+  }, [flushQueue, persistQueue, scope]);
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       const [cached, queued, failed] = await Promise.all([
-        AsyncStorage.getItem(cacheKey(workspaceId)),
-        AsyncStorage.getItem(queueKey(workspaceId)),
-        AsyncStorage.getItem(failedKey(workspaceId)),
+        AsyncStorage.getItem(cacheKey(workspaceId, userId)),
+        AsyncStorage.getItem(queueKey(workspaceId, userId)),
+        AsyncStorage.getItem(failedKey(workspaceId, userId)),
       ]);
-      if (!mounted) return;
+      if (!mounted || !scope.isActive()) return;
       if (cached) {
-        try { setFamily(normalizeFamilyState(JSON.parse(cached))); } catch { /* ignore invalid cache */ }
+        try { applySnapshot(normalizeFamilyState(JSON.parse(cached))); } catch { /* ignore invalid cache */ }
       }
       if (queued) {
         try { queueRef.current = JSON.parse(queued) as CloudMutation[]; } catch { queueRef.current = []; }
@@ -212,12 +264,14 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
           queueRef.current = [...queueRef.current, ...repairable.map((item) => item.mutation).filter((mutation) => !queuedIds.has(mutation.id))];
           failedRef.current = retained.map((item) => ({ ...item, error: item.error === '[object Object]' ? 'Cloud request failed. Retry this change to retrieve the current server message.' : item.error }));
           await Promise.all([
-            AsyncStorage.setItem(queueKey(workspaceId), JSON.stringify(queueRef.current)),
-            AsyncStorage.setItem(failedKey(workspaceId), JSON.stringify(failedRef.current)),
+            writeStorage(queueKey(workspaceId, userId), JSON.stringify(queueRef.current)),
+            writeStorage(failedKey(workspaceId, userId), JSON.stringify(failedRef.current)),
           ]);
+          if (!mounted || !scope.isActive()) return;
           setFailedSyncChanges([...failedRef.current]);
         } catch { failedRef.current = []; }
       }
+      if (!mounted || !scope.isActive()) return;
       setPendingMutationCount(queueRef.current.length);
       setIsHydrated(true);
       // Preserve the optimistic cached state until queued offline changes have
@@ -225,9 +279,11 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
       if (queueRef.current.length) await flushQueue();
       else await refresh();
     }
-    void load();
+    void load().catch((error) => {
+      if (mounted && scope.isActive()) { setSyncError(errorMessage(error)); setSyncStatus('offline'); setIsHydrated(true); }
+    });
     return () => { mounted = false; };
-  }, [flushQueue, refresh, workspaceId]);
+  }, [applySnapshot, flushQueue, refresh, scope, userId, workspaceId, writeStorage]);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -263,7 +319,7 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
     for (const table of tables) {
       channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => {
         if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-        refreshTimerRef.current = setTimeout(() => { void refresh(); }, 250);
+        refreshTimerRef.current = setTimeout(() => { if (queueRef.current.length) void flushQueue(); else void refresh(); }, 250);
       });
     }
     channel.subscribe();
@@ -271,7 +327,7 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       void client.removeChannel(channel);
     };
-  }, [refresh, workspaceId]);
+  }, [flushQueue, refresh, workspaceId]);
 
   const addProfile = useCallback((input: NewProfileInput) => {
     const profile: ChildProfile = {
@@ -292,23 +348,19 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
 
 
   const updateProfile = useCallback((profileId: string, input: NewProfileInput) => {
-    let updated: ChildProfile | null = null;
-    updateFamily((current) => ({ ...current, profiles: current.profiles.map((profile) => {
-      if (profile.id !== profileId) return profile;
-      updated = { ...profile, name: input.name.trim(), avatar: input.avatar, colorKey: input.colorKey, pattern: input.pattern, currencyType: input.currencyType, storageType: input.storageType };
-      return updated;
-    }) }));
-    if (updated) enqueue({ id: makeId('mutation'), type: 'update_profile', payload: { profile: updated } });
+    const profile = familyRef.current.profiles.find((item) => item.id === profileId);
+    if (!profile) return;
+    const updated = { ...profile, name: input.name.trim(), avatar: input.avatar, colorKey: input.colorKey, pattern: input.pattern, currencyType: input.currencyType, storageType: input.storageType };
+    updateFamily((current) => ({ ...current, profiles: current.profiles.map((item) => item.id === profileId ? updated : item) }));
+    enqueue({ id: makeId('mutation'), type: 'update_profile', payload: { profile: updated } });
   }, [enqueue, updateFamily]);
 
   const updateOwnProfilePreferences = useCallback((profileId: string, input: NewProfileInput) => {
-    let updated: ChildProfile | null = null;
-    updateFamily((current) => ({ ...current, profiles: current.profiles.map((profile) => {
-      if (profile.id !== profileId) return profile;
-      updated = { ...profile, colorKey: input.colorKey, pattern: input.pattern, currencyType: input.currencyType, storageType: input.storageType };
-      return updated;
-    }) }));
-    if (updated) enqueue({ id: makeId('mutation'), type: 'update_child_preferences', payload: { profile: updated } });
+    const profile = familyRef.current.profiles.find((item) => item.id === profileId);
+    if (!profile) return;
+    const updated = { ...profile, colorKey: input.colorKey, pattern: input.pattern, currencyType: input.currencyType, storageType: input.storageType };
+    updateFamily((current) => ({ ...current, profiles: current.profiles.map((item) => item.id === profileId ? updated : item) }));
+    enqueue({ id: makeId('mutation'), type: 'update_child_preferences', payload: { profile: updated } });
   }, [enqueue, updateFamily]);
 
   const deleteProfile = useCallback((profileId: string) => {
@@ -360,10 +412,9 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
   }, [enqueue, updateFamily]);
 
   const updateTask = useCallback((taskId: string, input: NewTaskInput) => {
-    let updated: ChildTask | null = null;
-    updateFamily((current) => ({ ...current, tasks: current.tasks.map((task) => {
-      if (task.id !== taskId) return task;
-      updated = {
+    const task = familyRef.current.tasks.find((item) => item.id === taskId);
+    if (!task) return;
+    const updated = {
         ...task,
         title: input.title.trim(), amount: Math.max(1, input.amount), frequency: input.frequency,
         description: input.description?.trim() || undefined, icon: input.icon,
@@ -371,9 +422,8 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
         scheduleDays: input.frequency === 'weekly' ? Array.from(new Set(input.scheduleDays?.length ? input.scheduleDays : [new Date().getDay()])).sort() : undefined,
         scheduleDates: input.frequency === 'custom' ? Array.from(new Set(input.scheduleDates ?? [])).sort() : undefined,
       };
-      return updated;
-    }) }));
-    if (updated) enqueue({ id: makeId('mutation'), type: 'update_task', payload: { task: updated } });
+    updateFamily((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === taskId ? updated : item) }));
+    enqueue({ id: makeId('mutation'), type: 'update_task', payload: { task: updated } });
   }, [enqueue, updateFamily]);
 
   const setTaskAssigned = useCallback((taskId: string, profileId: string, assigned: boolean) => {
@@ -536,13 +586,11 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
   }, [enqueue, updateFamily]);
 
   const updateReward = useCallback((rewardId: string, input: NewRewardInput) => {
-    let updated: ChildReward | null = null;
-    updateFamily((current) => ({ ...current, rewards: current.rewards.map((reward) => {
-      if (reward.id !== rewardId) return reward;
-      updated = { ...reward, title: input.title.trim(), cost: Math.max(1, input.cost), icon: input.icon, assignedProfileIds: Array.from(new Set(input.profileIds ?? reward.assignedProfileIds)) };
-      return updated;
-    }) }));
-    if (updated) enqueue({ id: makeId('mutation'), type: 'update_reward', payload: { reward: updated } });
+    const reward = familyRef.current.rewards.find((item) => item.id === rewardId);
+    if (!reward) return;
+    const updated = { ...reward, title: input.title.trim(), cost: Math.max(1, input.cost), icon: input.icon, assignedProfileIds: Array.from(new Set(input.profileIds ?? reward.assignedProfileIds)) };
+    updateFamily((current) => ({ ...current, rewards: current.rewards.map((item) => item.id === rewardId ? updated : item) }));
+    enqueue({ id: makeId('mutation'), type: 'update_reward', payload: { reward: updated } });
   }, [enqueue, updateFamily]);
 
   const deleteReward = useCallback((rewardId: string) => {
@@ -588,6 +636,7 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
         rewards: current.rewards.map((item) => item.id !== rewardId ? item : {
           ...item,
           redemptionEvents: { ...item.redemptionEvents, [profileId]: [...(item.redemptionEvents[profileId] ?? []), occurredAt] },
+          redemptionAccountingEvents: { ...item.redemptionAccountingEvents, [profileId]: [...(item.redemptionAccountingEvents?.[profileId] ?? item.redemptionEvents[profileId] ?? []), occurredAt] },
           redemptionCosts: { ...(item.redemptionCosts ?? {}), [profileId]: [...(item.redemptionCosts?.[profileId] ?? []), chargedAmount] },
         }),
         rewardDeliveries: deliverToChild ? [...current.rewardDeliveries, {
@@ -650,7 +699,7 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
 
 
   const resetCloudSync = useCallback(async () => {
-    if (flushingRef.current) return false;
+    if (!scope.isActive() || flushingRef.current) return false;
     flushingRef.current = true;
     setSyncStatus('syncing');
     setSyncError(null);
@@ -659,18 +708,21 @@ export function useCloudFamilyData(workspaceId: string): FamilyDataController {
       setPendingMutationCount(0);
       failedRef.current = [];
       setFailedSyncChanges([]);
+      await storageWritesRef.current.catch(() => undefined);
+      if (!scope.isActive()) return false;
       await AsyncStorage.multiRemove([
-        queueKey(workspaceId),
-        failedKey(workspaceId),
-        cacheKey(workspaceId),
+        queueKey(workspaceId, userId),
+        failedKey(workspaceId, userId),
+        cacheKey(workspaceId, userId),
       ]);
-      const next = await fetchCloudFamilyState(workspaceId);
-      setFamily(next);
-      await AsyncStorage.setItem(cacheKey(workspaceId), JSON.stringify(next));
+      const next = await fetchCloudFamilyState(workspaceId, await sessionClient());
+      if (!scope.isActive()) return false;
+      applySnapshot(next);
       setSyncError(null);
       setSyncStatus('synced');
       return true;
     } catch (error) {
+      if (!scope.isActive()) return false;
       setSyncError(errorMessage(error));
       setSyncStatus('offline');
       return false;

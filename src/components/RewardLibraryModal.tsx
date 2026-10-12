@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -41,6 +41,7 @@ export function RewardLibraryModal({ visible, profiles, rewards, onClose, onAddR
   const { teacherMode, terms } = useClassroomMode();
   const sampleRewards = teacherMode ? CLASSROOM_SAMPLE_REWARDS : SAMPLE_REWARDS;
   const [showComposer, setShowComposer] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const [title, setTitle] = useState('');
   const [cost, setCost] = useState('25');
   const [icon, setIcon] = useState<ItemIcon>({ type: 'preset', value: '🎁' });
@@ -79,6 +80,7 @@ export function RewardLibraryModal({ visible, profiles, rewards, onClose, onAddR
     setIcon(reward.icon);
     setSelectedProfileIds(reward.assignedProfileIds);
     setShowComposer(true);
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: true }));
   };
 
   const addSample = (index: number, overrideCost?: number) => {
@@ -115,7 +117,7 @@ export function RewardLibraryModal({ visible, profiles, rewards, onClose, onAddR
             <View style={styles.topAction} />
           </View>
 
-          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <ScrollView ref={scrollRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={[styles.hero, { backgroundColor: theme.rewardSoft }]}>
               <CategoryIcon backgroundColor={theme.rewardSoft} kind="reward" size={82} theme={theme} />
               <View style={styles.heroCopy}>

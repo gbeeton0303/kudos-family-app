@@ -33,10 +33,10 @@ test('critical task writes use database RPCs directly and treat push delivery as
   assert.match(repository, /void performTaskAction\(\{ action: 'notify-request'/);
 });
 
-test('a stale local reward balance falls back to the approved early-redemption path', async () => {
+test('a stale local reward balance never silently authorizes early redemption', async () => {
   const repository = await read('../src/cloud/repository.ts');
-  assert.match(repository, /insufficient balance[\s\S]*p_allow_early:\s*true/i);
-  assert.match(repository, /using the existing early-redemption path/i);
+  assert.doesNotMatch(repository, /p_allow_early:\s*true/);
+  assert.match(repository, /p_allow_early: payload.allowEarly === true/);
 });
 
 test('repeat daily awards use a manager-only RPC while normal completions keep their period lock', async () => {
@@ -89,7 +89,7 @@ test('cloud task completion is optimistic, persistent, and retried after reconne
   assert.match(completion, /type: 'complete_task'/);
   assert.match(hook, /AppState\.addEventListener\('change'/);
   assert.match(hook, /setInterval\(retryWhenAvailable, 12_000\)/);
-  assert.match(hook, /AsyncStorage\.setItem\(queueKey\(workspaceId\)/);
+  assert.match(hook, /writeStorage\(queueKey\(workspaceId, userId\)/);
 });
 
 test('workspace membership is cached so an authenticated family can cold-launch offline', async () => {
@@ -118,7 +118,7 @@ test('child device replacement requires a manager and revokes old auth before is
   assert.ok(deleteOldUser > managerCheck, 'old child auth must be deleted after authorization');
   assert.ok(createInvite > deleteOldUser, 'replacement code must be created only after old access is revoked');
   assert.match(profileFunction, /if \(!user\.is_anonymous\) throw new Error\('A child code can only be used/);
-  assert.match(profileFunction, /if \(oldAccount\.user\?\.is_anonymous\)[\s\S]*deleteUser\(profile\.linked_user_id\)/);
+  assert.match(profileFunction, /if \(oldAccount\.user\?\.is_anonymous \|\| oldAccount\.user\?\.app_metadata\?\.account_type === 'child'\)[\s\S]*deleteUser\(profile\.linked_user_id\)/);
   assert.match(inviteMigration, /from auth\.users[\s\S]*is_anonymous is true/i);
 });
 

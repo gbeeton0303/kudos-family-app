@@ -202,9 +202,10 @@ export function getProfileBalance(profile: ChildProfile, tasks: ChildTask[], rew
     const redemptions = getRewardEvents(reward, profile.id);
     const recordedCosts = reward.redemptionCosts?.[profile.id] ?? [];
     redemptions.forEach((occurredAt, index) => {
+      const accountingAt = reward.redemptionAccountingEvents?.[profile.id]?.[index] ?? occurredAt;
       const recorded = recordedCosts[index];
       const amount = typeof recorded === 'number' && recorded >= 0 ? recorded : reward.cost;
-      events.push({ occurredAt, amount: Math.max(0, amount), kind: 'spend' });
+      events.push({ occurredAt: accountingAt, amount: Math.max(0, amount), kind: 'spend' });
     });
   }
 
@@ -390,6 +391,8 @@ export function normalizeFamilyState(value: unknown): FamilyState {
         icon: normalizeItemIcon(reward.icon, '🎁'),
         assignedProfileIds: Array.from(new Set(assignedProfileIds)),
         redemptionEvents: normalizeEventMap(reward.redemptionEvents, validProfileIds),
+        redemptionAccountingEvents: reward.redemptionAccountingEvents
+          ? normalizeEventMap(reward.redemptionAccountingEvents, validProfileIds) : undefined,
         redemptionCosts: reward.redemptionCosts && typeof reward.redemptionCosts === 'object'
           ? Object.fromEntries(Object.entries(reward.redemptionCosts as Record<string, unknown>)
               .filter(([profileId]) => profileIdSet.has(profileId))

@@ -2,6 +2,7 @@ import { decode } from 'base64-arraybuffer';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { ItemIcon, ProfileAvatar } from '../types';
 import { requireSupabase } from './supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const BUCKET = 'brightsteps-media';
 
@@ -48,10 +49,9 @@ async function readPhoto(uri: string) {
   return { contentType: mediaContentType(uri), base64 };
 }
 
-export async function uploadPhoto(workspaceId: string, folder: 'profiles' | 'tasks' | 'rewards', entityId: string, uri: string) {
+export async function uploadPhoto(workspaceId: string, folder: 'profiles' | 'tasks' | 'rewards', entityId: string, uri: string, client: SupabaseClient = requireSupabase()) {
   const existingPath = existingStoragePath(uri, workspaceId);
   if (existingPath) return existingPath;
-  const client = requireSupabase();
   const photo = await readPhoto(uri);
   const extension = photo.contentType === 'image/png' ? 'png' : photo.contentType === 'image/webp' ? 'webp' : 'jpg';
   const path = `${workspaceId}/${folder}/${entityId}/${Date.now()}.${extension}`;
@@ -63,20 +63,19 @@ export async function uploadPhoto(workspaceId: string, folder: 'profiles' | 'tas
   return path;
 }
 
-export async function prepareAvatarForCloud(workspaceId: string, profileId: string, avatar: ProfileAvatar) {
+export async function prepareAvatarForCloud(workspaceId: string, profileId: string, avatar: ProfileAvatar, client: SupabaseClient = requireSupabase()) {
   if (avatar.type === 'preset') return { type: 'preset' as const, value: avatar.key };
-  return { type: 'photo' as const, value: await uploadPhoto(workspaceId, 'profiles', profileId, avatar.uri) };
+  return { type: 'photo' as const, value: await uploadPhoto(workspaceId, 'profiles', profileId, avatar.uri, client) };
 }
 
-export async function prepareIconForCloud(workspaceId: string, folder: 'tasks' | 'rewards', entityId: string, icon: ItemIcon) {
+export async function prepareIconForCloud(workspaceId: string, folder: 'tasks' | 'rewards', entityId: string, icon: ItemIcon, client: SupabaseClient = requireSupabase()) {
   if (icon.type === 'preset') return { type: 'preset' as const, value: icon.value };
-  return { type: 'photo' as const, value: await uploadPhoto(workspaceId, folder, entityId, icon.uri) };
+  return { type: 'photo' as const, value: await uploadPhoto(workspaceId, folder, entityId, icon.uri, client) };
 }
 
-export async function signMediaPaths(paths: string[]) {
+export async function signMediaPaths(paths: string[], client: SupabaseClient = requireSupabase()) {
   const unique = Array.from(new Set(paths.filter(Boolean)));
   if (!unique.length) return new Map<string, string>();
-  const client = requireSupabase();
   const { data, error } = await client.storage.from(BUCKET).createSignedUrls(unique, 60 * 60 * 24);
   if (error) throw error;
   return new Map<string, string>((data ?? []).flatMap((item, index) => item.signedUrl ? [[unique[index], item.signedUrl] as [string, string]] : []));

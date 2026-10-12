@@ -35,6 +35,8 @@ import type { FamilyDataController } from './src/hooks/familyController';
 import { useCloudFamilyData } from './src/hooks/useCloudFamilyData';
 import { useLocalFamilyData } from './src/hooks/useFamilyData';
 import { AuthScreen, PasswordRecoveryScreen } from './src/screens/AuthScreen';
+import { ChildLoginSetupScreen } from './src/screens/ChildLoginSetupScreen';
+import { isChildIdentity } from './src/cloud/childIdentity';
 import { ChildProfilePickerScreen } from './src/screens/ChildProfilePickerScreen';
 import { CloudLoadingScreen } from './src/screens/CloudLoadingScreen';
 import { CloudSetupScreen } from './src/screens/CloudSetupScreen';
@@ -93,6 +95,7 @@ function AppContent({ family, cloudAccess = null, cloudEmail, cloudDisplayName, 
   const [editProfileId, setEditProfileId] = useState<string | null>(null);
   const [notificationsVisible, setNotificationsVisible] = useState(false);
   const [cloudAccountVisible, setCloudAccountVisible] = useState(false);
+  const [accountSettingsSection, setAccountSettingsSection] = useState<'account' | 'workspaces'>('account');
   const [failedSyncVisible, setFailedSyncVisible] = useState(false);
   const [celebration, setCelebration] = useState<TaskAward | null>(null);
   const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(null);
@@ -420,7 +423,7 @@ function AppContent({ family, cloudAccess = null, cloudEmail, cloudDisplayName, 
     if (activeSection === 'choreChart') return <ChoreChartScreen familyName={cloudAccess?.workspaceName} profiles={family.profiles} theme={theme} />;
     if (activeSection === 'history') return <HistoryScreen onSelectProfile={setSelectedProfileId} profiles={family.profiles} tasks={family.tasks} theme={theme} />;
     if (activeSection === 'settings') {
-      return <SettingsScreen appearanceLabel={appearance === 'system' ? 'System' : appearance === 'light' ? 'Light' : 'Dark'} cloudAccess={cloudAccess} cloudEmail={cloudEmail} hapticsEnabled={hapticsEnabled} notificationsEnabled={notificationsEnabled} onHapticsChange={setHapticsEnabled} onNotificationsChange={setNotificationsEnabled} onOpenAppearance={() => setAppearanceVisible(true)} onOpenCloudAccount={cloudAccess ? () => setCloudAccountVisible(true) : undefined} onOpenFamilyAccount={() => cloudAccess ? setCloudAccountVisible(true) : setAddProfileVisible(true)} onOpenLifetimeUpgrade={onOpenLifetimeUpgrade} onOpenTutorial={replayTutorial} onOpenSupport={() => void Linking.openURL('https://mykudosfamily.com/support').catch(() => Alert.alert('Could Not Open Support', 'Visit mykudosfamily.com/support in your browser.'))} onOpenPrivacy={() => setInformationPage('privacy')} onOpenFailedSyncChanges={() => setFailedSyncVisible(true)} onResetCloudSync={confirmResetCloudSync} failedSyncCount={family.failedSyncChanges?.length ?? 0} onTeacherModeChange={updateTeacherMode} showTrialUpgrade={showTrialUpgrade} teacherModeEnabled={teacherMode} workspaceSwitchingEnabled={Boolean(cloudAccess && !cloudChild)} theme={theme} />;
+      return <SettingsScreen accountFirstName={cloudDisplayName} onOpenWorkspaces={cloudAccess ? () => { setAccountSettingsSection('workspaces'); setCloudAccountVisible(true); } : undefined} appearanceLabel={appearance === 'system' ? 'System' : appearance === 'light' ? 'Light' : 'Dark'} cloudAccess={cloudAccess} cloudEmail={cloudEmail} hapticsEnabled={hapticsEnabled} notificationsEnabled={notificationsEnabled} onHapticsChange={setHapticsEnabled} onNotificationsChange={setNotificationsEnabled} onOpenAppearance={() => setAppearanceVisible(true)} onOpenCloudAccount={cloudAccess ? () => { setAccountSettingsSection('account'); setCloudAccountVisible(true); } : undefined} onOpenFamilyAccount={() => cloudAccess ? setCloudAccountVisible(true) : setAddProfileVisible(true)} onOpenLifetimeUpgrade={onOpenLifetimeUpgrade} onOpenTutorial={replayTutorial} onOpenSupport={() => void Linking.openURL('https://mykudosfamily.com/support').catch(() => Alert.alert('Could Not Open Support', 'Visit mykudosfamily.com/support in your browser.'))} onOpenPrivacy={() => setInformationPage('privacy')} onOpenFailedSyncChanges={() => setFailedSyncVisible(true)} onResetCloudSync={confirmResetCloudSync} failedSyncCount={family.failedSyncChanges?.length ?? 0} onTeacherModeChange={updateTeacherMode} showTrialUpgrade={showTrialUpgrade} teacherModeEnabled={teacherMode} workspaceSwitchingEnabled={Boolean(cloudAccess && !cloudChild)} theme={theme} />;
     }
 
     return <DashboardScreen accountFirstName={cloudDisplayName?.trim().split(/\s+/)[0]} familyAccountName={cloudAccess?.workspaceName} onAddProfile={() => setAddProfileVisible(true)} onOpenApprovals={() => setNotificationsVisible(true)} onOpenFeature={setActiveFeature} onSelectProfile={setSelectedProfileId} pendingApprovalCount={pendingRequests.length} profiles={family.profiles} rewards={family.rewards} tasks={family.tasks} theme={theme} />;
@@ -475,7 +478,7 @@ function AppContent({ family, cloudAccess = null, cloudEmail, cloudDisplayName, 
         <ParentTutorialModal onFinish={completeTutorial} onSkip={completeTutorial} onStepChange={setTutorialStep} step={tutorialStep} theme={theme} visible={tutorialChecked && manager && mode === 'parent' && tutorialVisible} />
         <RewardRedemptionModal onClose={() => setRedemption(null)} profile={redemptionProfile} redemption={redemption} theme={theme} />
         <FailedSyncChangesModal changes={family.failedSyncChanges ?? []} onClose={() => setFailedSyncVisible(false)} onDiscard={(id) => void family.discardFailedSyncChange?.(id)} onRetry={(id) => void family.retryFailedSyncChange?.(id)} onRetryAll={() => void family.retryAllFailedSyncChanges?.()} theme={theme} visible={Boolean(cloudAccess && manager && failedSyncVisible)} />
-        {cloudAccess && onCloudSignOut && onWorkspaceRefresh ? <CloudAccountModal access={cloudAccess} email={cloudEmail ?? ''} onClose={() => setCloudAccountVisible(false)} onRefresh={() => void family.refresh?.()} onWorkspaceRefresh={onWorkspaceRefresh} onWorkspaceTypeChange={onWorkspaceTypeChange} onSignOut={onCloudSignOut} profiles={family.profiles} syncStatus={family.syncStatus ?? 'synced'} theme={theme} visible={cloudAccountVisible} workspaces={workspaceAccessList} /> : null}
+        {cloudAccess && onCloudSignOut && onWorkspaceRefresh ? <CloudAccountModal section={accountSettingsSection} access={cloudAccess} email={cloudEmail ?? ''} onClose={() => setCloudAccountVisible(false)} onRefresh={() => void family.refresh?.()} onWorkspaceRefresh={onWorkspaceRefresh} onWorkspaceTypeChange={onWorkspaceTypeChange} onSignOut={onCloudSignOut} profiles={family.profiles} syncStatus={family.syncStatus ?? 'synced'} theme={theme} visible={cloudAccountVisible} workspaces={workspaceAccessList} /> : null}
       </View>
     </ClassroomModeProvider>
   );
@@ -536,7 +539,7 @@ function ConnectedWorkspaceApp({ access, accessList, email, displayName, onOpenL
   );
 }
 
-function EntitledWorkspaceApp({ access, accessList, email, displayName, onSignOut, onWorkspaceRefresh, onWorkspaceTypeChange, userId }: { access: WorkspaceAccess; accessList: WorkspaceAccess[]; email: string; displayName?: string; onSignOut: () => void; onWorkspaceRefresh: () => Promise<void>; onWorkspaceTypeChange: (type: WorkspaceType) => Promise<void>; userId: string }) {
+function EntitledWorkspaceApp({ access, accessList, email, displayName, onSignOut, onWorkspaceRefresh, onWorkspaceTypeChange, onWorkspaceSelect, userId }: { access: WorkspaceAccess; accessList: WorkspaceAccess[]; email: string; displayName?: string; onSignOut: () => void; onWorkspaceRefresh: () => Promise<void>; onWorkspaceTypeChange: (type: WorkspaceType) => Promise<void>; onWorkspaceSelect: (id: string) => Promise<void>; userId: string }) {
   const { entitlement, error, isLoading, refresh, setEntitlement } = useWorkspaceEntitlement(userId, access.workspaceId);
   const [purchaseVisible, setPurchaseVisible] = useState(false);
   useApplePurchaseReconciliation({
@@ -568,22 +571,22 @@ function EntitledWorkspaceApp({ access, accessList, email, displayName, onSignOu
       source: 'offline',
       isOfflineGrace: false,
     };
-    return <WorkspaceAccessPausedScreen access={access} entitlement={unavailable} error={error} onRefresh={refresh} onSignOut={onSignOut} />;
+    return <WorkspaceAccessPausedScreen access={access} workspaces={accessList} onWorkspaceSelect={onWorkspaceSelect} onWorkspaceRefresh={onWorkspaceRefresh} entitlement={unavailable} error={error} onRefresh={refresh} onSignOut={onSignOut} />;
   }
 
   if (entitlement.canAccess) {
     const canUpgradeDuringTrial = entitlement.status === 'trial' && entitlement.canPurchase && access.role !== 'child';
     if (purchaseVisible && canUpgradeDuringTrial) {
-      return <PurchaseAccessScreen access={access} entitlement={entitlement} error={error} onClose={() => setPurchaseVisible(false)} onRefresh={refresh} onSignOut={onSignOut} onVerified={(verified) => { setEntitlement(verified); setPurchaseVisible(false); }} userId={userId} />;
+      return <PurchaseAccessScreen access={access} workspaces={accessList} onWorkspaceSelect={onWorkspaceSelect} onWorkspaceRefresh={onWorkspaceRefresh} entitlement={entitlement} error={error} onClose={() => setPurchaseVisible(false)} onRefresh={refresh} onSignOut={onSignOut} onVerified={(verified) => { setEntitlement(verified); setPurchaseVisible(false); }} userId={userId} />;
     }
     return <ConnectedWorkspaceApp access={access} accessList={accessList} displayName={displayName} email={email} onOpenLifetimeUpgrade={canUpgradeDuringTrial ? () => setPurchaseVisible(true) : undefined} onSignOut={onSignOut} onWorkspaceRefresh={onWorkspaceRefresh} onWorkspaceTypeChange={onWorkspaceTypeChange} showTrialUpgrade={canUpgradeDuringTrial} />;
   }
 
   if (entitlement.canPurchase && access.role !== 'child') {
-    return <PurchaseAccessScreen access={access} entitlement={entitlement} error={error} onRefresh={refresh} onSignOut={onSignOut} onVerified={setEntitlement} userId={userId} />;
+    return <PurchaseAccessScreen access={access} workspaces={accessList} onWorkspaceSelect={onWorkspaceSelect} onWorkspaceRefresh={onWorkspaceRefresh} entitlement={entitlement} error={error} onRefresh={refresh} onSignOut={onSignOut} onVerified={setEntitlement} userId={userId} />;
   }
 
-  return <WorkspaceAccessPausedScreen access={access} entitlement={entitlement} error={error} onRefresh={refresh} onSignOut={onSignOut} />;
+  return <WorkspaceAccessPausedScreen access={access} workspaces={accessList} onWorkspaceSelect={onWorkspaceSelect} onWorkspaceRefresh={onWorkspaceRefresh} entitlement={entitlement} error={error} onRefresh={refresh} onSignOut={onSignOut} />;
 }
 
 function CloudAppRouter({ onUseLocalDemo }: { onUseLocalDemo: () => void }) {
@@ -592,7 +595,8 @@ function CloudAppRouter({ onUseLocalDemo }: { onUseLocalDemo: () => void }) {
   const colorScheme = useColorScheme();
   const workspaceModalTheme = colorScheme === 'dark' ? darkTheme : lightTheme;
   const [workspaceToCreate, setWorkspaceToCreate] = useState<WorkspaceType | null>(null);
-  const childAccount = auth.user?.is_anonymous === true || auth.user?.user_metadata?.account_type === 'child';
+  const childAccount = isChildIdentity(auth.user);
+  const [childSetupSkippedFor, setChildSetupSkippedFor] = useState<string | null>(null);
 
   const changeWorkspaceType = async (type: WorkspaceType) => {
     if (childAccount || workspaces.selected?.workspaceType === type) return;
@@ -617,11 +621,15 @@ function CloudAppRouter({ onUseLocalDemo }: { onUseLocalDemo: () => void }) {
   if (!auth.session || !auth.user) return <AuthScreen />;
   if (workspaces.isLoading) return <CloudLoadingScreen label="Loading your workspaces…" />;
   if (childAccount && workspaces.selected?.role !== 'child') return <ChildAccountStatusScreen error={workspaces.error} onRetry={() => void workspaces.refresh()} />;
+  if (auth.user.is_anonymous && workspaces.selected?.role === 'child' && childSetupSkippedFor !== auth.user.id) return <ChildLoginSetupScreen onSkip={() => setChildSetupSkippedFor(auth.user!.id)} />;
   if (!workspaces.selected && workspaces.hasPendingAdultInvite) return <AdultInviteStatusScreen error={workspaces.error} onRetry={() => void workspaces.refresh()} onSignOut={() => void auth.signOut()} />;
   if (!workspaces.selected) return <WorkspaceOnboardingScreen onComplete={() => void workspaces.refresh()} onSignOut={() => void auth.signOut()} />;
 
   return <>
-    <EntitledWorkspaceApp key={workspaces.selected.workspaceId} access={workspaces.selected} accessList={workspaces.accessList} displayName={(auth.user.user_metadata?.display_name as string | undefined)} email={auth.user.email ?? ''} onSignOut={() => void auth.signOut()} onWorkspaceRefresh={async () => { await workspaces.refresh(); }} onWorkspaceTypeChange={changeWorkspaceType} userId={auth.user.id} />
+    <EntitledWorkspaceApp key={`${auth.user.id}:${workspaces.selected.workspaceId}`} access={workspaces.selected} accessList={workspaces.accessList} displayName={(auth.user.user_metadata?.display_name as string | undefined)} email={auth.user.email ?? ''} onSignOut={() => void auth.signOut()} onWorkspaceRefresh={async () => { await workspaces.refresh(); }} onWorkspaceTypeChange={changeWorkspaceType} onWorkspaceSelect={async (id) => {
+      if (childAccount || !workspaces.accessList.some((item) => item.workspaceId === id && (item.role === 'parent' || item.role === 'teacher'))) throw new Error('This workspace is not available to your account.');
+      await workspaces.selectWorkspace(id);
+    }} userId={auth.user.id} />
     <WorkspaceSwitchModal onCancel={() => setWorkspaceToCreate(null)} onCreate={createAndOpenWorkspace} targetType={workspaceToCreate} theme={workspaceModalTheme} />
   </>;
 }

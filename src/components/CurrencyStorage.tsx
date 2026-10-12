@@ -1,5 +1,5 @@
 import { CurrencyIcon } from './CurrencyIcon';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { getProfileAccent, getProfileSoftColor } from '../data/profileStyles';
 import { CURRENCY_META, STORAGE_META, currencyWord } from '../data/currency';
@@ -101,6 +101,7 @@ export function CurrencyStorage({
 }: CurrencyStorageProps) {
   const { width: windowWidth } = useWindowDimensions();
   const wideProfileLayout = windowWidth >= 700;
+  const [goalBadgeWidth, setGoalBadgeWidth] = useState(132);
   const fill = useRef(new Animated.Value(0)).current;
   const shimmer = useRef(new Animated.Value(0)).current;
   const dropValues = useRef(Array.from({ length: 8 }, () => new Animated.Value(0))).current;
@@ -110,7 +111,6 @@ export function CurrencyStorage({
   const storage = STORAGE_META[profile.storageType];
   const rewardNameLength = goalLabel?.trim().length ?? 0;
   const rewardNameSize = rewardNameLength > 28 ? 10 : rewardNameLength > 20 ? 11 : rewardNameLength > 13 ? 12 : 13;
-  const rewardCostSize = goalAmount >= 1000 ? 10 : goalAmount >= 100 ? 11 : 12;
 
   const fillForBalance = useCallback((value: number) => {
     const capacity = goalAmount > 0 ? goalAmount : DEFAULT_VISUAL_CAPACITY[profile.currencyType];
@@ -209,11 +209,11 @@ export function CurrencyStorage({
           }}
           style={[
             styles.rewardGoalBadgeGlow,
-            wideProfileLayout && styles.rewardGoalBadgeGlowWide,
+            wideProfileLayout && [styles.rewardGoalBadgeGlowWide, { transform: [{ translateX: -goalBadgeWidth / 2 }] }],
             { shadowColor: '#D8B45A' },
           ]}
         >
-          <View style={[styles.rewardGoalBadge, { backgroundColor: theme.surface, borderColor: '#D8B45A' }]}>
+          <View onLayout={(event) => setGoalBadgeWidth(event.nativeEvent.layout.width)} style={[styles.rewardGoalBadge, { backgroundColor: theme.surface, borderColor: '#D8B45A' }]}>
             <View style={[styles.rewardGoalTab, { backgroundColor: theme.surface, borderColor: '#D8B45A' }]}>
               <Text style={styles.rewardGoalTabIcon}>🎯</Text>
               <Text style={[styles.rewardGoalTabText, { color: profileAccent }]}>Goal</Text>
@@ -227,10 +227,8 @@ export function CurrencyStorage({
               {goalLabel}
             </Text>
             <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.72}
-              numberOfLines={1}
-              style={[styles.rewardGoalBadgeCost, { color: profileAccent, fontSize: rewardCostSize }]}
+              accessibilityLabel={`Reward value: ${goalAmount} ${currencyWord(profile.currencyType, goalAmount)}`}
+              style={[styles.rewardGoalBadgeCost, { color: profileAccent }]}
             >
               {goalAmount} {currencyWord(profile.currencyType, goalAmount)}
             </Text>
@@ -533,13 +531,13 @@ const styles = StyleSheet.create({
   visualOnlyWrap:{alignItems:'center',height:252,justifyContent:'center',overflow:'visible',position:'relative',width:286},
 
   rewardGoalBadgeGlow:{bottom:13,left:14,position:'absolute',shadowOffset:{width:0,height:2},shadowOpacity:0.14,shadowRadius:7,zIndex:25},
-  rewardGoalBadgeGlowWide:{left:'24%',transform:[{translateX:-66}]},
-  rewardGoalBadge:{alignItems:'flex-start',borderRadius:14,borderWidth:1.5,height:64,justifyContent:'center',paddingBottom:6,paddingHorizontal:10,paddingTop:15,width:132},
+  rewardGoalBadgeGlowWide:{left:'24%'},
+  rewardGoalBadge:{alignItems:'flex-start',borderRadius:14,borderWidth:1.5,minHeight:64,minWidth:104,maxWidth:156,justifyContent:'center',paddingBottom:8,paddingHorizontal:10,paddingTop:15},
   rewardGoalTab:{alignItems:'center',borderRadius:999,borderWidth:1.3,flexDirection:'row',gap:4,height:25,left:9,paddingHorizontal:8,position:'absolute',top:-12,zIndex:3},
   rewardGoalTabIcon:{fontSize:14,lineHeight:17},
   rewardGoalTabText:{fontSize:11,fontWeight:'900',letterSpacing:0.6,textTransform:'uppercase'},
-  rewardGoalBadgeName:{fontWeight:'900',lineHeight:15,textAlign:'left',width:'100%'},
-  rewardGoalBadgeCost:{fontWeight:'900',lineHeight:14,marginTop:1,textAlign:'left',width:'100%'},
+  rewardGoalBadgeName:{fontWeight:'900',lineHeight:15,textAlign:'left',maxWidth:134},
+  rewardGoalBadgeCost:{fontSize:15,fontWeight:'900',lineHeight:22,flexShrink:0,marginTop:2,textAlign:'left',maxWidth:134},
 
   storageCelebrationBackdrop:{height:194,left:'50%',marginLeft:-108,marginTop:-97,position:'absolute',top:'50%',width:216,zIndex:0},
   storageSparkle:{fontWeight:'900',position:'absolute',textShadowColor:'rgba(244,208,111,0.30)',textShadowOffset:{width:0,height:0},textShadowRadius:4},

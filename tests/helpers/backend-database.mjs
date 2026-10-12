@@ -15,10 +15,13 @@ export async function createBackendDatabase() {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
-    create schema auth; create schema extensions;
-    create table auth.users(id uuid primary key, email text, raw_user_meta_data jsonb default '{}', is_anonymous boolean default false);
+    create schema auth; create schema extensions; create schema storage;
+    create table storage.objects(id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid, owner_id text);
+    create table auth.users(id uuid primary key, email text, raw_user_meta_data jsonb default '{}', raw_app_meta_data jsonb default '{}', is_anonymous boolean default false);
     create function auth.uid() returns uuid language sql stable as
       $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+    create function auth.jwt() returns jsonb language sql stable as
+      $$select coalesce(nullif(current_setting('request.jwt.claims',true),'')::jsonb,'{}'::jsonb)$$;
     grant usage on schema auth, public to authenticated, anon, service_role;
   `);
   // Execute the real base schema and RLS. Storage, pgcrypto and Realtime are

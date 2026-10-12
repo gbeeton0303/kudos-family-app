@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { acceptPendingAdultInvite, getPendingAdultInviteCode, getSelectedWorkspaceId, loadCachedWorkspaceAccess, loadWorkspaceAccess, setSelectedWorkspaceId } from './workspaces';
 import type { WorkspaceAccess } from './types';
+import { isChildIdentity } from './childIdentity';
 
 export function useWorkspaceAccess(user: User | null) {
   const [accessList, setAccessList] = useState<WorkspaceAccess[]>([]);
@@ -18,7 +19,7 @@ export function useWorkspaceAccess(user: User | null) {
       setHasPendingAdultInvite(false);
       return;
     }
-    const childOnly = user.is_anonymous === true || user.user_metadata?.account_type === 'child';
+    const childOnly = isChildIdentity(user);
     if (!background) setIsLoading(true);
     try {
       const pendingCode = childOnly ? null : await getPendingAdultInviteCode();
@@ -59,7 +60,7 @@ export function useWorkspaceAccess(user: User | null) {
         await refresh();
         return;
       }
-      const childOnly = user.is_anonymous === true || user.user_metadata?.account_type === 'child';
+      const childOnly = isChildIdentity(user);
       const cached = await loadCachedWorkspaceAccess(user.id, childOnly);
       if (!mounted) return;
       if (cached.length) {

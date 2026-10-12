@@ -15,7 +15,7 @@ function mutationTitle(item: FailedSyncChange) {
 
 function friendlyReason(error: string) {
   if (!error || error === '[object Object]') return 'Cloud request failed. Retry this change to retrieve the current server message.';
-  if (/insufficient balance/i.test(error)) return 'The cloud balance was too low for this reward. You can retry after more points are earned, or discard this request.';
+  if (/insufficient balance/i.test(error)) return 'The cloud balance changed and this reward was not redeemed. Retry after more points are earned, or discard this request and choose Redeem Early from the reward to confirm early redemption.';
   if (/not authorized/i.test(error)) return 'This account no longer has permission to make this change.';
   if (/already completed/i.test(error)) return 'This task was already completed for the same period.';
   return error;

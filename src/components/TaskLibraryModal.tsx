@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -45,6 +45,7 @@ export function TaskLibraryModal({ visible, profiles, tasks, onClose, onAddTask,
   const { teacherMode, terms } = useClassroomMode();
   const sampleTasks = teacherMode ? CLASSROOM_SAMPLE_TASKS : SAMPLE_TASKS;
   const [showComposer, setShowComposer] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('5');
   const [frequency, setFrequency] = useState<TaskFrequency>('daily');
@@ -99,6 +100,7 @@ export function TaskLibraryModal({ visible, profiles, tasks, onClose, onAddTask,
     setScheduleDays(task.scheduleDays ?? [new Date().getDay()]);
     setScheduleDates(task.scheduleDates ?? [toDateKey()]);
     setShowComposer(true);
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: true }));
   };
 
   const addSample = (index: number, overrideAmount?: number) => {
@@ -149,7 +151,7 @@ export function TaskLibraryModal({ visible, profiles, tasks, onClose, onAddTask,
             <View style={styles.topAction} />
           </View>
 
-          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <ScrollView ref={scrollRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={[styles.hero, { backgroundColor: taskHeroBackground }]}>
               <CategoryIcon backgroundColor={taskHeroBackground} kind="task" size={92} theme={theme} />
               <View style={styles.heroCopy}>

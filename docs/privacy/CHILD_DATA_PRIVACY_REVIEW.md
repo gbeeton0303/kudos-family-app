@@ -11,11 +11,11 @@ The current architecture follows a parent-managed, data-minimizing model and is 
 
 | Area | Finding | Control in release 3.9.55 |
 |---|---|---|
-| Account creation | Children do not provide email addresses or passwords | Child login uses anonymous Supabase Auth after a parent-generated code |
+| Account creation | Children do not provide email addresses; optional username/password login is available only after adult-authorized linking | Initial anonymous Supabase Auth is converted on the server without changing the linked profile; Supabase hashes passwords; a reserved .invalid identifier replaces real email |
 | Parent authorization | A child profile and code must be created by an authenticated parent or teacher | Manager membership is checked server-side; codes are one-time, hashed, expiring, and rate-limited |
 | Child profile | Name/nickname, avatar or optional photo, preferences, tasks, rewards, and activity are processed | Adults are encouraged to use nicknames and built-in avatars; fields are limited to app functionality |
 | Photos | Optional photos can identify a child | The system picker exposes only the chosen image; cloud files use private storage and workspace access controls |
-| Child access | A child should not see adult administration or unrelated profiles | Row-level security links an anonymous account to one profile and workspace |
+| Child access | A child should not see adult administration or unrelated profiles | Row-level security links the account to one profile; server-owned child classification persists after conversion or editable metadata changes; database triggers prevent adult memberships and workspace creation |
 | Lost device | A former child device must not retain access | Parent-controlled replacement revokes the old Auth user and membership before issuing a new code; profile/history remain |
 | Notifications | Push tokens are persistent identifiers | Optional, linked only for app alerts, disclosed as Device ID, not used for tracking |
 | Support email | Support content may contain personal information | Support copy tells users not to submit passwords, codes, or unnecessary child information; Resend is disclosed |

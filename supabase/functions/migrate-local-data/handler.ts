@@ -1,6 +1,6 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 import { requireManager, requiredId } from '../_shared/workspace-security.ts';
-import { importId, remapImportState, writeImportPlan } from '../_shared/import-security.ts';
+import { importId, remapImportState } from '../_shared/import-security.ts';
 import type { ImportWrite } from '../_shared/import-security.ts';
 
 export function createMigrationHandler(deps: { requireUser: (req: Request) => Promise<any>; serviceClient: () => any }) {
@@ -12,11 +12,6 @@ export function createMigrationHandler(deps: { requireUser: (req: Request) => Pr
     const workspaceId = requiredId(body.workspaceId, 'workspace ID').toLowerCase();
     const admin = deps.serviceClient();
     await requireManager(admin, user.id, workspaceId);
-    const { data: imported, error: importedError } = await admin.from('migration_imports')
-      .select('workspace_id').eq('workspace_id', workspaceId).eq('user_id', user.id).maybeSingle();
-    if (importedError) throw importedError;
-    // Honor old import markers too, avoiding duplicate history after upgrading.
-    if (imported) return jsonResponse({ data: { imported: true, alreadyImported: true } });
     const state = await remapImportState(workspaceId, body.state);
     const writes: ImportWrite[] = [];
     const profileRows = state.profiles.map((p: any) => ({
@@ -35,6 +30,15 @@ export function createMigrationHandler(deps: { requireUser: (req: Request) => Pr
     if (profileRows.length) {
       writes.push({ table: 'child_profiles', rows: profileRows, conflict: 'id' });
     }
+    for (const profile of state.profiles) {
+      for (const resetAt of profile.balanceResetEvents) {
+        writes.push({ table: 'profile_balance_resets', rows: [{
+          id: await importId(workspaceId, 'balance-reset', [profile.id, resetAt]),
+          workspace_id: workspaceId, profile_id: profile.id, reset_at: resetAt,
+          source_id: null, created_by: user.id,
+        }], conflict: 'id' });
+      }
+    }
 
     for (const task of state.tasks) {
       writes.push({ table: 'task_templates', rows: [{
@@ -50,6 +54,7 @@ export function createMigrationHandler(deps: { requireUser: (req: Request) => Pr
         schedule_dates: task.scheduleDates ?? null,
         created_by: user.id,
         created_at: task.createdAt,
+        archived_at: task.archivedAt ?? null,
       }], conflict: 'id' });
       if (task.assignedProfileIds?.length) {
         writes.push({ table: 'task_assignments',
@@ -57,20 +62,28 @@ export function createMigrationHandler(deps: { requireUser: (req: Request) => Pr
           conflict: 'task_id,profile_id' });
       }
       for (const [profileId, events] of Object.entries(task.completionEvents ?? {})) {
-        for (const event of events as string[]) {
-          const eventId = await importId(workspaceId, 'completion', [task.id, profileId, event]);
+        const seenPeriods = new Set<string>();
+        for (const [index, event] of (events as string[]).entries()) {
+          const duplicateIndex = (events as string[]).slice(0, index).filter((value) => value === event).length;
+          const eventId = await importId(workspaceId, 'completion', duplicateIndex ? [task.id, profileId, event, duplicateIndex] : [task.id, profileId, event]);
+          const historicalAmount = task.completionAmounts[profileId][index];
+          const eventDate = new Date(event);
+          const monday = new Date(eventDate);
+          monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
           const periodKey = task.frequency === 'unlimited'
             ? `event-${event}`
             : task.frequency === 'weekly'
-              ? `week-${event.slice(0, 10)}-weekday-${new Date(event).getUTCDay()}`
-              : `day-${event.slice(0, 10)}`;
+              ? `week-${monday.toISOString().slice(0, 10)}`
+              : task.frequency === 'monthly' ? `month-${event.slice(0, 7)}` : `day-${event.slice(0, 10)}`;
+          const storedPeriod = seenPeriods.has(periodKey) ? `${periodKey}:import:${eventId}` : periodKey;
+          seenPeriods.add(periodKey);
           writes.push({ table: 'task_completions', rows: [{
             id: eventId,
             workspace_id: workspaceId,
             task_id: task.id,
             profile_id: profileId,
             completed_at: event,
-            period_key: periodKey,
+            period_key: storedPeriod,
             source: 'migration',
             approved_by: user.id,
           }], conflict: 'id' });
@@ -78,8 +91,8 @@ export function createMigrationHandler(deps: { requireUser: (req: Request) => Pr
             id: `ledger-${eventId}`,
             workspace_id: workspaceId,
             profile_id: profileId,
-            amount: task.amount,
-            transaction_type: 'migration',
+            amount: historicalAmount,
+            transaction_type: 'task_completion',
             source_id: eventId,
             description: task.title,
             created_by: user.id,
@@ -106,23 +119,26 @@ export function createMigrationHandler(deps: { requireUser: (req: Request) => Pr
           conflict: 'reward_id,profile_id' });
       }
       for (const [profileId, events] of Object.entries(reward.redemptionEvents ?? {})) {
-        for (const event of events as string[]) {
-          const redemptionId = await importId(workspaceId, 'redemption', [reward.id, profileId, event]);
+        for (const [index, event] of (events as string[]).entries()) {
+          const duplicateIndex = (events as string[]).slice(0, index).filter((value) => value === event).length;
+          const redemptionId = await importId(workspaceId, 'redemption', duplicateIndex ? [reward.id, profileId, event, duplicateIndex] : [reward.id, profileId, event]);
+          const historicalCost = reward.redemptionCosts[profileId][index];
           writes.push({ table: 'reward_redemptions', rows: [{
             id: redemptionId,
             workspace_id: workspaceId,
             reward_id: reward.id,
             profile_id: profileId,
-            cost: reward.cost,
+            cost: historicalCost,
             redeemed_by: user.id,
-            redeemed_at: event,
+            redeemed_at: reward.redemptionAccountingEvents[profileId]?.[index] ?? event,
+            occurred_at: event,
           }], conflict: 'id' });
           writes.push({ table: 'currency_ledger', rows: [{
             id: `ledger-${redemptionId}`,
             workspace_id: workspaceId,
             profile_id: profileId,
-            amount: -reward.cost,
-            transaction_type: 'migration',
+            amount: -historicalCost,
+            transaction_type: 'reward_redemption',
             source_id: redemptionId,
             description: reward.title,
             created_by: user.id,
@@ -162,14 +178,15 @@ export function createMigrationHandler(deps: { requireUser: (req: Request) => Pr
           opened_at: d.openedAt ?? null,
         })), conflict: 'id' });
     }
-    await writeImportPlan(admin, workspaceId, writes);
-    const { error: markerError } = await admin.from('migration_imports').upsert({
-      workspace_id: workspaceId,
-      user_id: user.id,
-      source_version: body.sourceVersion ?? 'local',
-    }, { onConflict: 'workspace_id,user_id', ignoreDuplicates: true });
-    if (markerError) throw markerError;
-    return jsonResponse({ data: { imported: true } });
+    // One database call commits the complete plan and receipt, or nothing.
+    // Never fall back to sequential writes if the migration is missing.
+    const payloadHash = await importId(workspaceId, 'payload', writes);
+    const { data, error } = await admin.rpc('commit_local_import', {
+      p_workspace_id: workspaceId, p_user_id: user.id, p_writes: writes,
+      p_payload_hash: payloadHash, p_source_version: body.sourceVersion ?? 'local',
+    });
+    if (error) throw error;
+    return jsonResponse({ data });
   } catch (error) {
     return jsonResponse({ error: error instanceof Error ? error.message : String(error) }, 400);
   }

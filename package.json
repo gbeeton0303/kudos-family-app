@@ -1,6 +1,6 @@
 {
   "name": "brightsteps-family-rewards",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -10,7 +10,7 @@
     "start:dev-client": "expo start --dev-client",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "typecheck:security": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext --moduleResolution bundler --allowImportingTsExtensions --lib ES2022,DOM supabase/functions/migrate-local-data/handler.ts supabase/functions/reward-action/handler.ts supabase/functions/_shared/adult-access-security.ts supabase/functions/_shared/entitlement-reconciliation.ts",
+    "typecheck:security": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext --moduleResolution bundler --allowImportingTsExtensions --lib ES2022,DOM supabase/functions/migrate-local-data/handler.ts supabase/functions/reward-action/handler.ts supabase/functions/_shared/adult-access-security.ts supabase/functions/_shared/entitlement-reconciliation.ts supabase/functions/delete-account/entire-account.ts supabase/functions/profile-invite/child-login.ts",
     "test:backend": "node --test --experimental-strip-types tests/backend-integrity.test.mjs",
     "test": "node --test --experimental-strip-types tests/*.test.mjs",
     "doctor": "npx expo-doctor",

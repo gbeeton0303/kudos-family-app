@@ -42,8 +42,31 @@ export async function remapImportState(workspaceId: string, state: any) {
       if (!Array.isArray(values) || values.some((value) => typeof value !== 'string' || !Number.isFinite(Date.parse(value)))) {
         throw new Error('Invalid import history');
       }
-      return [reference(profiles, profileId, 'Profile ID'), [...new Set(values)]];
+      // Repeated awards can share a timestamp; keep event/value indexes aligned.
+      return [reference(profiles, profileId, 'Profile ID'), [...values]];
     }));
+  };
+  const amounts = (history: any, eventMap: any, fallback: unknown, minimum = 0) => {
+    if (history != null && (typeof history !== 'object' || Array.isArray(history))) throw new Error('Invalid historical amounts');
+    const checked = (value: unknown) => {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) throw new Error('Invalid historical amount');
+      return value;
+    };
+    for (const profileId of Object.keys(history ?? {})) {
+      reference(profiles, profileId, 'Profile ID');
+      if (!Object.prototype.hasOwnProperty.call(eventMap ?? {}, profileId)) throw new Error('Historical amounts have no matching events');
+    }
+    return Object.fromEntries(Object.entries(eventMap ?? {}).map(([profileId, values]) => {
+      const saved = history?.[profileId];
+      if (saved != null && (!Array.isArray(saved) || saved.length !== (values as any[]).length)) throw new Error('Historical amounts do not match events');
+      return [reference(profiles, profileId, 'Profile ID'), saved == null
+        ? (values as any[]).map(() => checked(fallback)) : saved.map(checked)];
+    }));
+  };
+  const resets = (values: any) => {
+    if (values == null) return [];
+    if (!Array.isArray(values) || values.some((value) => typeof value !== 'string' || !Number.isFinite(Date.parse(value)))) throw new Error('Invalid balance reset history');
+    return [...new Set(values)];
   };
   const mapExtras = async (rows: any, kind: string, mapRow: (row: any) => any) => {
     if (rows == null) return [];
@@ -53,11 +76,14 @@ export async function remapImportState(workspaceId: string, state: any) {
   };
   return {
     ...state,
-    profiles: state.profiles.map((row: any) => ({ ...row, id: profiles.get(row.id) })),
+    profiles: state.profiles.map((row: any) => ({ ...row, id: profiles.get(row.id), balanceResetEvents: resets(row.balanceResetEvents) })),
     tasks: state.tasks.map((row: any) => ({ ...row, id: tasks.get(row.id),
-      assignedProfileIds: assignments(row.assignedProfileIds), completionEvents: events(row.completionEvents) })),
+      assignedProfileIds: assignments(row.assignedProfileIds), completionEvents: events(row.completionEvents),
+      completionAmounts: amounts(row.completionAmounts, row.completionEvents, row.amount, 1) })),
     rewards: state.rewards.map((row: any) => ({ ...row, id: rewards.get(row.id),
-      assignedProfileIds: assignments(row.assignedProfileIds), redemptionEvents: events(row.redemptionEvents) })),
+      assignedProfileIds: assignments(row.assignedProfileIds), redemptionEvents: events(row.redemptionEvents),
+      redemptionAccountingEvents: events(row.redemptionAccountingEvents),
+      redemptionCosts: amounts(row.redemptionCosts, row.redemptionEvents, row.cost) })),
     completionRequests: await mapExtras(state.completionRequests, 'request', (row) => ({
       taskId: reference(tasks, row.taskId, 'Task ID'), profileId: reference(profiles, row.profileId, 'Profile ID'),
     })),
